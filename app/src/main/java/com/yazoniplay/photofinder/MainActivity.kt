@@ -71,7 +71,7 @@ private data class MediaItem(
     val aiLabel: String = ""
 )
 
-private enum class Page { PHOTOS, ALBUMS, FAVORITES, BIN, SETTINGS }
+private enum class Page { PHOTOS, ALBUMS, FAVORITES, BIN, SETTINGS, AI }
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -99,6 +99,8 @@ private fun PhotoFinderApp() {
     var renameTarget by remember { mutableStateOf<MediaItem?>(null) }
     var renameText by remember { mutableStateOf("") }
     var aiWorking by remember { mutableStateOf(false) }
+    var aiProgress by remember { mutableStateOf(0) }
+    var aiTotal by remember { mutableStateOf(0) }
     var selectedAlbum by remember { mutableStateOf<String?>(null) }
     var favorites by remember { mutableStateOf(prefs.getStringSet("favorites", emptySet())?.toSet() ?: emptySet()) }
     var bin by remember { mutableStateOf(prefs.getStringSet("bin", emptySet())?.toSet() ?: emptySet()) }
@@ -182,12 +184,14 @@ private fun PhotoFinderApp() {
                                 Page.FAVORITES -> "Favorites"
                                 Page.BIN -> "Bin"
                                 Page.SETTINGS -> "Settings"
+                                Page.AI -> "AI Studio"
                             },
                             style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold
                         )
                         Text(
                             when (page) {
                                 Page.SETTINGS -> "Make Photo Finder yours"
+                                Page.AI -> "Private, on-device photo intelligence"
                                 Page.ALBUMS -> if (selectedAlbum == null) "${media.map { it.album }.distinct().size} folders" else "${activeItems.size} items"
                                 else -> "${activeItems.size} items"
                             },
@@ -213,6 +217,17 @@ private fun PhotoFinderApp() {
                                 onClick = {
                                     overflowMenuExpanded = false
                                     page = Page.BIN
+                                    selectedAlbum = null
+                                    searchOpen = false
+                                    query = ""
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("AI Studio") },
+                                leadingIcon = { Icon(Icons.Rounded.AutoAwesome, contentDescription = null) },
+                                onClick = {
+                                    overflowMenuExpanded = false
+                                    page = Page.AI
                                     selectedAlbum = null
                                     searchOpen = false
                                     query = ""
@@ -277,6 +292,80 @@ private fun PhotoFinderApp() {
                 }
 
                 when (page) {
+                    Page.AI -> Column(
+                        Modifier.weight(1f).fillMaxWidth().padding(horizontal = 16.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        SettingsRow("Analyze photo library", "Recognize objects and scenes across your photos", Icons.Rounded.AutoAwesome) {
+                            Button(
+                                enabled = !aiWorking && hasImagePermission && media.any { !it.isVideo && it.id.toString() !in bin },
+                                onClick = {
+                                    scope.launch {
+                                        aiWorking = true
+                                        aiProgress = 0
+                                        val candidates = media.filter { !it.isVideo && it.id.toString() !in bin }
+                                        aiTotal = candidates.size
+                                        val labeler = ImageLabeling.getClient(ImageLabelerOptions.DEFAULT_OPTIONS)
+                                        val updated = parseMap(aiLabels).toMutableMap()
+                                        var completed = 0
+                                        try {
+                                            for (item in candidates) {
+                                                if (updated[item.id.toString()].isNullOrBlank()) {
+                                                    try {
+                                                        val labels = withContext(Dispatchers.IO) {
+                                                            labeler.process(InputImage.fromFilePath(context, item.uri)).await()
+                                                        }.sortedByDescending { it.confidence }.take(3).map { it.text }
+                                                        if (labels.isNotEmpty()) updated[item.id.toString()] = labels.joinToString(", ")
+                                                    } catch (_: Exception) { }
+                                                }
+                                                completed++
+                                                aiProgress = completed
+                                            }
+                                            aiLabels = mapToString(updated)
+                                            persistNames("ai_labels", aiLabels)
+                                            media = media.map { item -> item.copy(aiLabel = updated[item.id.toString()].orEmpty()) }
+                                            status = "AI scan complete. Your labels are saved on this device."
+                                        } finally {
+                                            labeler.close()
+                                            aiWorking = false
+                                        }
+                                    }
+                                }
+                            ) { Text(if (aiWorking) "Analyzing…" else "Analyze library") }
+                        }
+                        if (aiWorking) {
+                            LinearProgressIndicator(
+                                progress = { if (aiTotal > 0) aiProgress.toFloat() / aiTotal else 0f },
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            Text("Analyzed $aiProgress of $aiTotal photos", color = muted)
+                        }
+                        val labelMap = parseMap(aiLabels)
+                        val topLabels = labelMap.values.flatMap { it.split(", ") }
+                            .filter { it.isNotBlank() }.groupingBy { it }.eachCount()
+                            .entries.sortedByDescending { it.value }.take(12)
+                        SettingsRow("Recognized content", "Search your photos by objects and scenes", Icons.Rounded.Search) {
+                            Text("${labelMap.size} analyzed", color = accent, style = MaterialTheme.typography.labelLarge)
+                        }
+                        if (topLabels.isEmpty()) {
+                            Text("Run Analyze library to build searchable labels like dog, beach, food, or sunset.", color = muted)
+                        } else {
+                            Text("What your library contains", fontWeight = FontWeight.SemiBold)
+                            androidx.compose.foundation.layout.FlowRow(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                topLabels.forEach { entry ->
+                                    AssistChip(
+                                        onClick = { page = Page.PHOTOS; showVideos = false; query = entry.key; searchOpen = true },
+                                        label = { Text("${entry.key} · ${entry.value}") },
+                                        leadingIcon = { Icon(Icons.Rounded.AutoAwesome, null) }
+                                    )
+                                }
+                            }
+                        }
+                        Text("Processing runs on your device. This uses image-label recognition, not a cloud chatbot; results can be imperfect.", color = muted, style = MaterialTheme.typography.bodySmall)
+                    }
                     Page.SETTINGS -> Column(
                         Modifier.weight(1f).fillMaxWidth().padding(horizontal = 16.dp),
                         verticalArrangement = Arrangement.spacedBy(12.dp)
