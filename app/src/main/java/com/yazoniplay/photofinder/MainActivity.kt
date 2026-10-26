@@ -454,6 +454,45 @@ private fun PhotoFinderApp() {
                                             geminiAnswer = "Done — hid ${targets.size} matching item(s) in Photo Finder's Bin. Original files on your device were not deleted."
                                             true
                                         }
+                                        lower.contains("analyze library") || lower.contains("scan my photos") -> {
+                                            scope.launch {
+                                                aiWorking = true
+                                                val candidates = media.filter { !it.isVideo && it.id.toString() !in bin }
+                                                val labeler = ImageLabeling.getClient(ImageLabelerOptions.DEFAULT_OPTIONS)
+                                                val updated = parseMap(aiLabels).toMutableMap()
+                                                var completed = 0
+                                                try {
+                                                    for (item in candidates) {
+                                                        if (updated[item.id.toString()].isNullOrBlank()) {
+                                                            try {
+                                                                val labels = withContext(Dispatchers.IO) {
+                                                                    labeler.process(InputImage.fromFilePath(context, item.uri)).await()
+                                                                }.sortedByDescending { it.confidence }.take(3).map { it.text }
+                                                                if (labels.isNotEmpty()) updated[item.id.toString()] = labels.joinToString(", ")
+                                                            } catch (_: Exception) { }
+                                                        }
+                                                        completed++
+                                                        aiProgress = completed
+                                                        aiTotal = candidates.size
+                                                    }
+                                                    aiLabels = mapToString(updated)
+                                                    persistNames("ai_labels", aiLabels)
+                                                    media = media.map { item -> item.copy(aiLabel = updated[item.id.toString()].orEmpty()) }
+                                                    val result = "Library scan complete. Analyzed $completed photo(s); labels are saved on this device and available in search."
+                                                    geminiAnswer = result
+                                                    aiChat = aiChat + (false to result)
+                                                } catch (e: Exception) {
+                                                    val result = e.message ?: "The library scan failed."
+                                                    geminiAnswer = result
+                                                    aiChat = aiChat + (false to result)
+                                                } finally {
+                                                    labeler.close()
+                                                    aiWorking = false
+                                                }
+                                            }
+                                            geminiAnswer = "Starting an on-device scan of your photo library…"
+                                            true
+                                        }
                                         lower.contains("restore all") -> {
                                             val restored = bin.size
                                             bin = emptySet()
@@ -494,7 +533,7 @@ private fun PhotoFinderApp() {
                                                     }
                                                 geminiAnswer = askGemini(
                                                     context, geminiKey,
-                                                    "You are Ask AI, the assistant built into Photo Finder. Be clear, useful, concise and honest about capabilities. You can operate app navigation and library search only when the app explicitly executes a command; do not claim to have performed actions unless the app confirms them. Do not claim to see photos unless image data is included. Do not identify real people. Library filename and on-device label context (incomplete):\n$libraryContext\n\nUser request: $request"
+                                                    "You are Ask AI, the assistant built into Photo Finder. Be clear, useful, concise and honest about capabilities. The app can execute navigation, gallery search, batch favorites, moving matching items into the app-only Bin, restoring items, clearing search, and on-device library labeling when a command is recognized. Do not claim an action was performed unless the app confirms it. Do not claim to see photos unless image data is included. Do not identify real people. Library filename and on-device label context (incomplete):\n$libraryContext\n\nUser request: $request"
                                                 )
                                                 aiChat = aiChat + (false to geminiAnswer)
                                             } catch (e: Exception) {
