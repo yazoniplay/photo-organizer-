@@ -1246,7 +1246,10 @@ private fun loadMedia(context: Context, includeVideos: Boolean): List<MediaItem>
 private fun extractGallerySearchTerm(request: String): String {
     var term = request.trim().lowercase(Locale.ROOT)
     term = term.replace(Regex("^(please\\s+)?(can you\\s+|could you\\s+|i want to\\s+|i need to\\s+)?"), "")
-    term = term.replace(Regex("^(please\\s+)?(find|search for|search|show me|look for|locate)\\s+"), "")
+    term = term.replace(Regex("^(please\\s+)?(find|search for|search|show me|show|look for|locate)\\s+"), "")
+    term = term.replace(Regex("^(do i have|have i got)\\s+"), "")
+    term = term.replace(Regex("^which (photos|pictures|images) (have|show|contain|are)\\s+"), "")
+    term = term.replace(Regex("^(any|some) (photos|pictures|images) (of|with|at|in|from)\\s+"), "")
     term = term.replace(Regex("^(me\\s+)"), "")
     term = term.replace(Regex("^(a|an|the|some|any)\\s+"), "")
     term = term.replace(Regex("^(photo|picture|image|pic|photos|pictures|images)\\s+"), "")
@@ -1255,7 +1258,9 @@ private fun extractGallerySearchTerm(request: String): String {
     term = term.replace(Regex("^(a|an|the|some|any)\\s+"), "")
     term = term.replace(Regex("^(taken|shot|captured)\\s+(in|at|on|near)\\s+"), "")
     term = term.replace(Regex("^(in|at|on|near|from)\\s+"), "")
-    term = term.replace(Regex("\\s+(please|for me|in my gallery|in my photos)$"), "").trim()
+    term = term.replace(Regex("\\s+(photos|pictures|images|photo|picture|image)$"), "")
+    term = term.replace(Regex("\\s+(please|for me|in my gallery|in my photos)$"), "")
+    term = term.replace(Regex("[?.!,]+$"), "").trim()
     return term
 }
 
