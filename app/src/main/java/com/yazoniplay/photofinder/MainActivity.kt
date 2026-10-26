@@ -425,8 +425,9 @@ private fun PhotoFinderApp() {
                                             true
                                         }
                                         (lower.contains("move") && lower.contains("bin") || lower.contains("hide")) -> {
-                                            val term = lower.substringAfter("hide", lower.substringAfter("bin", "all photos"))
-                                                .replace("all photos", "").replace("all", "").replace("photos", "").trim()
+                                            val term = lower.substringAfter("hide", lower.substringAfter("move", "all photos"))
+                                                .substringBefore(" to bin")
+                                                .replace("all", "").replace("photos", "").trim()
                                             val targets = media.filter { item ->
                                                 item.id.toString() !in bin && (
                                                     term.isBlank() || item.name.contains(term, true) || item.album.contains(term, true) ||
