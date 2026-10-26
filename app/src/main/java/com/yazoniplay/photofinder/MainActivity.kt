@@ -2,67 +2,37 @@ package com.yazoniplay.photofinder
 
 import android.Manifest
 import android.content.ContentUris
+import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.MediaStore
+import android.provider.OpenableColumns
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.navigationBars
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBars
-import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.Collections
-import androidx.compose.material.icons.rounded.Image
-import androidx.compose.material.icons.rounded.Lock
-import androidx.compose.material.icons.rounded.PhotoLibrary
-import androidx.compose.material.icons.rounded.Search
-import androidx.compose.material.icons.rounded.TextSnippet
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
-import androidx.compose.material3.darkColorScheme
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.setValue
+import androidx.compose.material.icons.rounded.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -72,6 +42,8 @@ import coil.compose.AsyncImage
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.latin.TextRecognizerOptions
+import com.google.mlkit.vision.label.ImageLabeling
+import com.google.mlkit.vision.label.defaults.ImageLabelerOptions
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
@@ -80,26 +52,30 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-private val Background = Color(0xFF101210)
-private val SurfaceDark = Color(0xFF1B1E1B)
-private val Accent = Color(0xFFC5E8B7)
-private val TextMain = Color(0xFFF2F3EF)
-private val TextMuted = Color(0xFFA4AAA1)
+private val DarkBackground = Color(0xFF101210)
+private val DarkSurface = Color(0xFF1B1E1B)
+private val GreenAccent = Color(0xFFC5E8B7)
+private val LightBackground = Color(0xFFF6F7F3)
+private val LightSurface = Color(0xFFFFFFFF)
+private val LightAccent = Color(0xFF426B35)
 
-private data class PhotoItem(
+private data class MediaItem(
     val id: Long,
     val uri: Uri,
     val name: String,
     val dateAdded: Long,
-    val recognizedText: String = ""
+    val dateTaken: Long,
+    val album: String,
+    val isVideo: Boolean,
+    val recognizedText: String = "",
+    val aiLabel: String = ""
 )
+
+private enum class Page { PHOTOS, ALBUMS, FAVORITES, BIN, SETTINGS }
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        // Keep app content below Android's status bar and above gesture navigation.
-        window.statusBarColor = android.graphics.Color.rgb(16, 18, 16)
-        window.navigationBarColor = android.graphics.Color.rgb(16, 18, 16)
         setContent { PhotoFinderApp() }
     }
 }
@@ -107,257 +83,504 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun PhotoFinderApp() {
     val context = LocalContext.current
+    val prefs = remember { context.getSharedPreferences("photo_finder_prefs", Context.MODE_PRIVATE) }
     val scope = rememberCoroutineScope()
-    var photos by remember { mutableStateOf<List<PhotoItem>>(emptyList()) }
+    var darkMode by remember { mutableStateOf(prefs.getBoolean("dark_mode", true)) }
+    var media by remember { mutableStateOf<List<MediaItem>>(emptyList()) }
     var query by remember { mutableStateOf("") }
-    var hasPermission by remember {
-        mutableStateOf(
-            ContextCompat.checkSelfPermission(
-                context,
-                if (Build.VERSION.SDK_INT >= 33) Manifest.permission.READ_MEDIA_IMAGES
-                else Manifest.permission.READ_EXTERNAL_STORAGE
-            ) == PackageManager.PERMISSION_GRANTED
-        )
-    }
+    var searchOpen by remember { mutableStateOf(false) }
     var loading by remember { mutableStateOf(false) }
     var indexing by remember { mutableStateOf(false) }
     var status by remember { mutableStateOf("") }
-    var selectedTab by remember { mutableStateOf(0) }
-    var searchOpen by remember { mutableStateOf(false) }
+    var page by remember { mutableStateOf(Page.PHOTOS) }
+    var showVideos by remember { mutableStateOf(false) }
+    var viewerIndex by remember { mutableStateOf<Int?>(null) }
+    var renameTarget by remember { mutableStateOf<MediaItem?>(null) }
+    var renameText by remember { mutableStateOf("") }
+    var aiWorking by remember { mutableStateOf(false) }
+    var selectedAlbum by remember { mutableStateOf<String?>(null) }
+    var favorites by remember { mutableStateOf(prefs.getStringSet("favorites", emptySet())?.toSet() ?: emptySet()) }
+    var bin by remember { mutableStateOf(prefs.getStringSet("bin", emptySet())?.toSet() ?: emptySet()) }
+    var customNames by remember { mutableStateOf(prefs.getString("custom_names", "") ?: "") }
+    var aiLabels by remember { mutableStateOf(prefs.getString("ai_labels", "") ?: "") }
 
-    val permissionLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) { granted ->
-        hasPermission = granted
-        if (!granted) status = "Allow photo access to show your gallery."
+    val imagePermission = if (Build.VERSION.SDK_INT >= 33) Manifest.permission.READ_MEDIA_IMAGES else Manifest.permission.READ_EXTERNAL_STORAGE
+    val videoPermission = if (Build.VERSION.SDK_INT >= 33) Manifest.permission.READ_MEDIA_VIDEO else imagePermission
+    var hasImagePermission by remember { mutableStateOf(ContextCompat.checkSelfPermission(context, imagePermission) == PackageManager.PERMISSION_GRANTED) }
+    var hasVideoPermission by remember { mutableStateOf(ContextCompat.checkSelfPermission(context, videoPermission) == PackageManager.PERMISSION_GRANTED) }
+
+    val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
+        hasImagePermission = result[imagePermission] == true || ContextCompat.checkSelfPermission(context, imagePermission) == PackageManager.PERMISSION_GRANTED
+        hasVideoPermission = result[videoPermission] == true || ContextCompat.checkSelfPermission(context, videoPermission) == PackageManager.PERMISSION_GRANTED
+        if (!hasImagePermission) status = "Allow photo access to show your gallery."
     }
 
-    LaunchedEffect(hasPermission) {
-        if (hasPermission) {
+    fun persistSet(key: String, values: Set<String>) {
+        prefs.edit().putStringSet(key, values.toSet()).apply()
+    }
+    fun persistNames(key: String, value: String) { prefs.edit().putString(key, value).apply() }
+
+    LaunchedEffect(hasImagePermission, hasVideoPermission) {
+        if (hasImagePermission) {
             loading = true
-            photos = withContext(Dispatchers.IO) {
-                val saved = context.getSharedPreferences("photo_finder_ocr", android.content.Context.MODE_PRIVATE)
-                loadPhotos(context).map { photo ->
-                    photo.copy(recognizedText = saved.getString(photo.id.toString(), "") ?: "")
+            media = withContext(Dispatchers.IO) {
+                val ocr = context.getSharedPreferences("photo_finder_ocr", Context.MODE_PRIVATE)
+                loadMedia(context, hasVideoPermission).map { item ->
+                    item.copy(
+                        recognizedText = ocr.getString(item.id.toString(), "") ?: "",
+                        aiLabel = parseMap(aiLabels)[item.id.toString()] ?: ""
+                    )
                 }
             }
             loading = false
         }
     }
 
-    val visiblePhotos = remember(photos, query, selectedTab) {
-        val term = query.trim()
-        val filtered = if (term.isEmpty()) photos else photos.filter {
-            it.name.contains(term, ignoreCase = true) ||
-                it.recognizedText.contains(term, ignoreCase = true)
+    val activeItems = remember(media, page, showVideos, selectedAlbum, query, favorites, bin, customNames, aiLabels) {
+        val nameMap = parseMap(customNames)
+        val labels = parseMap(aiLabels)
+        var list = when (page) {
+            Page.FAVORITES -> media.filter { it.id.toString() in favorites }
+            Page.BIN -> media.filter { it.id.toString() in bin }
+            else -> media.filter { it.id.toString() !in bin }
         }
-        if (selectedTab == 1) filtered.distinctBy { it.dateAdded / 86400L } else filtered
+        if (page == Page.PHOTOS) list = list.filter { it.isVideo == showVideos }
+        if (selectedAlbum != null && page == Page.ALBUMS) list = list.filter { it.album == selectedAlbum }
+        if (query.isNotBlank()) list = list.filter {
+            (nameMap[it.id.toString()] ?: it.name).contains(query, true) ||
+                it.album.contains(query, true) || it.recognizedText.contains(query, true) ||
+                labels[it.id.toString()].orEmpty().contains(query, true)
+        }
+        list
     }
 
-    MaterialTheme(colorScheme = darkColorScheme(
-        background = Background,
-        surface = SurfaceDark,
-        primary = Accent,
-        onPrimary = Background,
-        onBackground = TextMain,
-        onSurface = TextMain
-    )) {
-        Surface(Modifier.fillMaxSize(), color = Background) {
-            Column(
-                modifier = Modifier.fillMaxSize()
-                    .windowInsetsPadding(WindowInsets.statusBars)
-                    .windowInsetsPadding(WindowInsets.navigationBars)
-            ) {
+    val darkColors = if (darkMode) darkColorScheme(
+        background = DarkBackground, surface = DarkSurface, primary = GreenAccent,
+        onPrimary = DarkBackground, onBackground = Color(0xFFF2F3EF), onSurface = Color(0xFFF2F3EF)
+    ) else lightColorScheme(
+        background = LightBackground, surface = LightSurface, primary = LightAccent,
+        onPrimary = Color.White, onBackground = Color(0xFF1C211A), onSurface = Color(0xFF1C211A)
+    )
+    val bg = if (darkMode) DarkBackground else LightBackground
+    val surface = if (darkMode) DarkSurface else LightSurface
+    val accent = if (darkMode) GreenAccent else LightAccent
+    val muted = if (darkMode) Color(0xFFA4AAA1) else Color(0xFF6B7167)
+
+    MaterialTheme(colorScheme = darkColors) {
+        Surface(Modifier.fillMaxSize(), color = bg) {
+            Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.statusBars)) {
                 Row(
-                    modifier = Modifier.fillMaxWidth().padding(start = 20.dp, end = 16.dp, top = 14.dp, bottom = 12.dp),
+                    Modifier.fillMaxWidth().padding(start = 20.dp, end = 16.dp, top = 14.dp, bottom = 12.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Column(Modifier.weight(1f)) {
                         Text(
-                            if (selectedTab == 1) "Albums" else if (searchOpen) "Search" else "Photos",
-                            style = MaterialTheme.typography.headlineLarge,
-                            fontWeight = FontWeight.Bold,
-                            color = TextMain
+                            when (page) {
+                                Page.PHOTOS -> if (showVideos) "Videos" else "Photos"
+                                Page.ALBUMS -> selectedAlbum ?: "Albums"
+                                Page.FAVORITES -> "Favorites"
+                                Page.BIN -> "Bin"
+                                Page.SETTINGS -> "Settings"
+                            },
+                            style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold
                         )
                         Text(
-                            if (hasPermission) "${photos.size} items on this device" else "Your personal gallery",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = TextMuted
+                            when (page) {
+                                Page.SETTINGS -> "Make Photo Finder yours"
+                                Page.ALBUMS -> if (selectedAlbum == null) "${media.map { it.album }.distinct().size} folders" else "${activeItems.size} items"
+                                else -> "${activeItems.size} items"
+                            },
+                            style = MaterialTheme.typography.bodyMedium, color = muted
                         )
                     }
-                    Box(
-                        modifier = Modifier.size(44.dp).clip(CircleShape).background(SurfaceDark)
-                            .clickable { searchOpen = !searchOpen; if (!searchOpen) query = "" },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(Icons.Rounded.Search, contentDescription = "Search photos", tint = TextMain)
+                    if (page != Page.SETTINGS && page != Page.BIN && page != Page.ALBUMS) {
+                        IconButton(onClick = { searchOpen = !searchOpen; if (!searchOpen) query = "" }) {
+                            Icon(Icons.Rounded.Search, contentDescription = "Search")
+                        }
                     }
                 }
 
-                if (searchOpen) {
+                if (searchOpen && page != Page.SETTINGS) {
                     OutlinedTextField(
-                        value = query,
-                        onValueChange = { query = it },
+                        value = query, onValueChange = { query = it },
                         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
-                        singleLine = true,
-                        placeholder = { Text("Search photos or screenshot text") },
+                        singleLine = true, placeholder = { Text("Search names, folders or text in screenshots") },
                         leadingIcon = { Icon(Icons.Rounded.Search, contentDescription = null) },
                         shape = RoundedCornerShape(18.dp)
                     )
                 }
 
-                if (hasPermission) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            if (query.isBlank()) "Recently added" else "${visiblePhotos.size} results",
-                            modifier = Modifier.weight(1f),
-                            color = TextMain,
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                        Box(
-                            modifier = Modifier.clip(RoundedCornerShape(50)).background(SurfaceDark)
-                                .clickable(enabled = !indexing && !loading && photos.isNotEmpty()) {
-                                    scope.launch {
-                                        indexing = true
-                                        status = "Reading screenshot text…"
-                                        val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
-                                        val candidates = photos.filter { item ->
-                                            val n = item.name.lowercase()
-                                            n.contains("screenshot") || n.contains("screen_shot") || n.contains("screen shot")
-                                        }.take(250)
-                                        val indexed = withContext(Dispatchers.IO) {
-                                            candidates.map { item ->
-                                                try {
-                                                    val image = InputImage.fromFilePath(context, item.uri)
-                                                    item.copy(recognizedText = recognizer.process(image).await().text)
-                                                } catch (_: Exception) { item }
-                                            }
+                if (page == Page.PHOTOS) {
+                    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FilterChip(selected = !showVideos, onClick = { showVideos = false }, label = { Text("Photos") }, leadingIcon = { Icon(Icons.Rounded.Photo, null) })
+                        FilterChip(selected = showVideos, onClick = { showVideos = true }, label = { Text("Videos") }, leadingIcon = { Icon(Icons.Rounded.Videocam, null) })
+                        Spacer(Modifier.weight(1f))
+                        FilledTonalButton(
+                            enabled = !indexing && activeItems.isNotEmpty(),
+                            onClick = {
+                                scope.launch {
+                                    indexing = true
+                                    status = "Reading text from screenshots…"
+                                    val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
+                                    val candidates = media.filter { !it.isVideo && it.name.contains("screenshot", true) }.take(250)
+                                    val indexed = withContext(Dispatchers.IO) {
+                                        candidates.map { item ->
+                                            try { item.copy(recognizedText = recognizer.process(InputImage.fromFilePath(context, item.uri)).await().text) }
+                                            catch (_: Exception) { item }
                                         }
-                                        recognizer.close()
-                                        val byId = indexed.associateBy { it.id }
-                                        val saved = context.getSharedPreferences("photo_finder_ocr", android.content.Context.MODE_PRIVATE)
-                                        with(saved.edit()) {
-                                            indexed.forEach { putString(it.id.toString(), it.recognizedText) }
-                                            apply()
-                                        }
-                                        photos = photos.map { byId[it.id] ?: it }
-                                        indexing = false
-                                        status = "Indexed text in ${indexed.count { it.recognizedText.isNotBlank() }} of ${candidates.size} screenshots."
                                     }
-                                }.padding(horizontal = 12.dp, vertical = 9.dp)
-                        ) {
-                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                if (indexing) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
-                                else Icon(Icons.Rounded.TextSnippet, contentDescription = null, tint = Accent, modifier = Modifier.size(18.dp))
-                                Text(if (indexing) "Scanning" else "Find text", color = Accent, style = MaterialTheme.typography.labelLarge)
+                                    recognizer.close()
+                                    val ocr = context.getSharedPreferences("photo_finder_ocr", Context.MODE_PRIVATE)
+                                    ocr.edit().also { e -> indexed.forEach { e.putString(it.id.toString(), it.recognizedText) } }.apply()
+                                    val map = indexed.associateBy { it.id }
+                                    media = media.map { map[it.id] ?: it }
+                                    indexing = false
+                                    status = "Text search updated for ${indexed.size} screenshots."
+                                }
                             }
-                        }
+                        ) { if (indexing) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp) else Icon(Icons.Rounded.TextSnippet, null); Spacer(Modifier.width(6.dp)); Text("Find text") }
                     }
-                    if (status.isNotBlank()) {
-                        Text(status, modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp), color = TextMuted, style = MaterialTheme.typography.bodySmall)
-                    }
+                    if (status.isNotBlank()) Text(status, Modifier.padding(horizontal = 20.dp, vertical = 4.dp), color = muted, style = MaterialTheme.typography.bodySmall)
                 }
 
-                when {
-                    !hasPermission -> Box(Modifier.fillMaxSize().weight(1f).padding(24.dp), contentAlignment = Alignment.Center) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                            Icon(Icons.Rounded.PhotoLibrary, contentDescription = null, tint = Accent, modifier = Modifier.size(52.dp))
-                            Text("Your photos, all in one place", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                            Text("Photo Finder searches locally. Your images are never uploaded.", color = TextMuted)
-                            Button(onClick = {
-                                permissionLauncher.launch(if (Build.VERSION.SDK_INT >= 33) Manifest.permission.READ_MEDIA_IMAGES else Manifest.permission.READ_EXTERNAL_STORAGE)
-                            }, colors = ButtonDefaults.buttonColors(containerColor = Accent)) {
-                                Text("Allow access", color = Background)
+                when (page) {
+                    Page.SETTINGS -> Column(
+                        Modifier.weight(1f).fillMaxWidth().padding(horizontal = 16.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        SettingsRow("Appearance", "Choose your preferred theme", Icons.Rounded.DarkMode) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(if (darkMode) "Dark" else "Light", color = muted)
+                                Spacer(Modifier.width(8.dp))
+                                Switch(checked = darkMode, onCheckedChange = {
+                                    darkMode = it
+                                    persistSet("favorites", favorites)
+                                    prefs.edit().putBoolean("dark_mode", it).apply()
+                                })
+                            }
+                        }
+                        SettingsRow("AI features", "On-device image labels and smart names", Icons.Rounded.AutoAwesome) {
+                            Text("On-device", color = accent, style = MaterialTheme.typography.labelLarge)
+                        }
+                        SettingsRow("Privacy", "Images stay on this device", Icons.Rounded.Lock) {
+                            Icon(Icons.Rounded.CheckCircle, null, tint = accent)
+                        }
+                        SettingsRow("Library", "${media.size} items · ${media.map { it.album }.distinct().size} folders", Icons.Rounded.Collections) {
+                            Text("Synced", color = muted)
+                        }
+                        Text("Smart names are saved inside Photo Finder. Original filenames are not changed.", color = muted, style = MaterialTheme.typography.bodySmall)
+                        Text("The Bin hides items inside this app; it does not delete the original files from your device.", color = muted, style = MaterialTheme.typography.bodySmall)
+                    }
+                    Page.ALBUMS -> {
+                        if (selectedAlbum != null) {
+                            Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)) {
+                                TextButton(onClick = { selectedAlbum = null }) { Icon(Icons.Rounded.ArrowBack, null); Text("All albums") }
+                            }
+                            MediaGrid(activeItems, favorites, customNames, onOpen = { item -> viewerIndex = activeItems.indexOf(item) }, onFavorite = { item ->
+                                favorites = if (item.id.toString() in favorites) favorites - item.id.toString() else favorites + item.id.toString()
+                                persistSet("favorites", favorites)
+                            }, onRename = { renameTarget = it; renameText = parseMap(customNames)[it.id.toString()] ?: it.name }, accent = accent, surface = surface, modifier = Modifier.weight(1f))
+                        } else {
+                            val albumNames = media.filter { it.id.toString() !in bin }.groupBy { it.album }.toList().sortedBy { it.first.lowercase() }
+                            androidx.compose.foundation.lazy.LazyColumn(Modifier.weight(1f), contentPadding = PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                items(albumNames.size) { index ->
+                                    val (albumName, itemsInAlbum) = albumNames[index]
+                                    Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(surface).clickable { selectedAlbum = albumName }.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                                        AsyncImage(itemsInAlbum.first().uri, null, Modifier.size(76.dp).clip(RoundedCornerShape(12.dp)), contentScale = androidx.compose.ui.layout.ContentScale.Crop)
+                                        Column(Modifier.weight(1f).padding(start = 14.dp)) {
+                                            Text(albumName, fontWeight = FontWeight.SemiBold)
+                                            Text("${itemsInAlbum.size} items", color = muted, style = MaterialTheme.typography.bodySmall)
+                                        }
+                                        Icon(Icons.Rounded.ChevronRight, null, tint = muted)
+                                    }
+                                }
                             }
                         }
                     }
-                    loading -> Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
-                        CircularProgressIndicator(color = Accent)
-                    }
-                    visiblePhotos.isEmpty() -> Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Icon(Icons.Rounded.Image, contentDescription = null, tint = TextMuted, modifier = Modifier.size(48.dp))
-                            Text(if (query.isBlank()) "No photos found" else "No matching photos", fontWeight = FontWeight.SemiBold)
-                            Text(if (query.isBlank()) "Photos on your device will appear here." else "Try a different search.", color = TextMuted)
-                        }
-                    }
-                    else -> LazyVerticalGrid(
-                        columns = GridCells.Fixed(3),
-                        modifier = Modifier.weight(1f),
-                        contentPadding = PaddingValues(start = 2.dp, end = 2.dp, top = 4.dp, bottom = 8.dp),
-                        horizontalArrangement = Arrangement.spacedBy(2.dp),
-                        verticalArrangement = Arrangement.spacedBy(2.dp)
-                    ) {
-                        items(items = visiblePhotos, key = { it.id }) { item ->
-                            AsyncImage(
-                                model = item.uri,
-                                contentDescription = "Photo from ${friendlyDate(item.dateAdded)}",
-                                modifier = Modifier.fillMaxWidth().height(128.dp).background(SurfaceDark),
-                                contentScale = ContentScale.Crop
+                    else -> {
+                        when {
+                            !hasImagePermission -> Box(Modifier.weight(1f).fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) {
+                                Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                                    Icon(Icons.Rounded.PhotoLibrary, null, tint = accent, modifier = Modifier.size(52.dp))
+                                    Text("Your photos, all in one place", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                                    Text("Your media stays on this device.", color = muted)
+                                    Button(onClick = { permissionLauncher.launch(arrayOf(imagePermission, videoPermission)) }) { Text("Allow access") }
+                                }
+                            }
+                            loading -> Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+                            page == Page.BIN && activeItems.isEmpty() -> EmptyState("Your bin is empty", "Items you hide from the app will appear here.", accent, muted, Modifier.weight(1f))
+                            activeItems.isEmpty() -> EmptyState(if (query.isBlank()) "Nothing here yet" else "No matching items", "Try another search or switch between Photos and Videos.", accent, muted, Modifier.weight(1f))
+                            else -> MediaGrid(
+                                activeItems, favorites, customNames,
+                                onOpen = { item ->
+                                    if (item.isVideo) {
+                                        try { context.startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(item.uri, "video/*").addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)) }
+                                        catch (_: Exception) { status = "No video player found." }
+                                    } else viewerIndex = activeItems.indexOf(item)
+                                },
+                                onFavorite = { item ->
+                                    favorites = if (item.id.toString() in favorites) favorites - item.id.toString() else favorites + item.id.toString()
+                                    persistSet("favorites", favorites)
+                                },
+                                onRename = { renameTarget = it; renameText = parseMap(customNames)[it.id.toString()] ?: suggestedBaseName(it) },
+                                onBin = { item ->
+                                    bin = bin + item.id.toString()
+                                    persistSet("bin", bin)
+                                },
+                                accent = accent, surface = surface, modifier = Modifier.weight(1f), isBin = page == Page.BIN,
+                                onRestore = { item -> bin = bin - item.id.toString(); persistSet("bin", bin) },
+                                onDeleteFromBin = { item ->
+                                    // The app removes its own bin marker; the source media file is never permanently deleted.
+                                    bin = bin - item.id.toString()
+                                    persistSet("bin", bin)
+                                }
                             )
                         }
                     }
                 }
 
-                NavigationBar(containerColor = Background, tonalElevation = 0.dp) {
-                    NavigationBarItem(
-                        selected = selectedTab == 0,
-                        onClick = { selectedTab = 0 },
-                        icon = { Icon(Icons.Rounded.PhotoLibrary, contentDescription = "Photos") },
-                        label = { Text("Photos") }
-                    )
-                    NavigationBarItem(
-                        selected = selectedTab == 1,
-                        onClick = { selectedTab = 1 },
-                        icon = { Icon(Icons.Rounded.Collections, contentDescription = "Albums") },
-                        label = { Text("Albums") }
-                    )
-                    NavigationBarItem(
-                        selected = searchOpen,
-                        onClick = { searchOpen = true; selectedTab = 0 },
-                        icon = { Icon(Icons.Rounded.Search, contentDescription = "Search") },
-                        label = { Text("Search") }
-                    )
+                NavigationBar(containerColor = bg, tonalElevation = 0.dp, modifier = Modifier.windowInsetsPadding(WindowInsets.navigationBars)) {
+                    NavigationBarItem(selected = page == Page.PHOTOS, onClick = { page = Page.PHOTOS; selectedAlbum = null }, icon = { Icon(Icons.Rounded.PhotoLibrary, null) }, label = { Text("Photos") })
+                    NavigationBarItem(selected = page == Page.ALBUMS, onClick = { page = Page.ALBUMS; selectedAlbum = null }, icon = { Icon(Icons.Rounded.Collections, null) }, label = { Text("Albums") })
+                    NavigationBarItem(selected = page == Page.FAVORITES, onClick = { page = Page.FAVORITES }, icon = { Icon(Icons.Rounded.Favorite, null) }, label = { Text("Favorites") })
+                    NavigationBarItem(selected = page == Page.BIN, onClick = { page = Page.BIN; selectedAlbum = null }, icon = { Icon(Icons.Rounded.DeleteOutline, null) }, label = { Text("Bin") })
+                    NavigationBarItem(selected = page == Page.SETTINGS, onClick = { page = Page.SETTINGS }, icon = { Icon(Icons.Rounded.Settings, null) }, label = { Text("Settings") })
+                }
+            }
+        }
+    }
+
+    val viewerItems = activeItems.filter { !it.isVideo }
+    viewerIndex?.let { rawIndex ->
+        val index = rawIndex.coerceIn(0, (viewerItems.size - 1).coerceAtLeast(0))
+        if (viewerItems.isNotEmpty()) {
+            PhotoViewer(
+                item = viewerItems[index], index = index, total = viewerItems.size,
+                title = parseMap(customNames)[viewerItems[index].id.toString()] ?: viewerItems[index].name,
+                label = parseMap(aiLabels)[viewerItems[index].id.toString()].orEmpty(),
+                onClose = { viewerIndex = null },
+                onPrevious = { viewerIndex = (index - 1).coerceAtLeast(0) },
+                onNext = { viewerIndex = (index + 1).coerceAtMost(viewerItems.lastIndex) },
+                onFavorite = {
+                    val id = viewerItems[index].id.toString()
+                    favorites = if (id in favorites) favorites - id else favorites + id
+                    persistSet("favorites", favorites)
+                },
+                isFavorite = viewerItems[index].id.toString() in favorites,
+                onSuggestName = {
+                    scope.launch {
+                        aiWorking = true
+                        try {
+                            val labeler = ImageLabeling.getClient(ImageLabelerOptions.DEFAULT_OPTIONS)
+                            val labels = labeler.process(InputImage.fromFilePath(context, viewerItems[index].uri)).await()
+                                .sortedByDescending { it.confidence }.take(3).map { it.text }
+                            labeler.close()
+                            val year = inferYear(viewerItems[index])
+                            val description = labels.firstOrNull()?.replaceFirstChar { it.uppercase() } ?: "Photo"
+                            val name = (listOf(year?.toString(), labels.take(2).joinToString("-") { it.replace(Regex("[^A-Za-z0-9]+"), "-") }.take(48))
+                                .filterNotNull().filter { it.isNotBlank() }.joinToString("-") + ".jpg")
+                            val map = parseMap(aiLabels).toMutableMap()
+                            map[viewerItems[index].id.toString()] = labels.joinToString(", ")
+                            aiLabels = mapToString(map)
+                            persistNames("ai_labels", aiLabels)
+                            renameTarget = viewerItems[index]
+                            renameText = name.ifBlank { "$description.jpg" }
+                            status = "AI suggestion ready. Review before saving."
+                        } catch (_: Exception) {
+                            status = "Couldn't analyze this image. Try again."
+                        }
+                        aiWorking = false
+                    }
+                },
+                aiWorking = aiWorking,
+                darkMode = darkMode
+            )
+        }
+    }
+
+    renameTarget?.let { item ->
+        AlertDialog(
+            onDismissRequest = { renameTarget = null },
+            title = { Text("Smart name") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Suggested from image content and available date clues. This changes the name shown in Photo Finder, not the original file.", color = muted)
+                    OutlinedTextField(value = renameText, onValueChange = { renameText = it }, label = { Text("Photo name") }, singleLine = true)
+                    val year = inferYear(item)
+                    if (year != null) Text("Detected year clue: $year", color = accent, style = MaterialTheme.typography.bodySmall)
+                }
+            },
+            confirmButton = { TextButton(onClick = {
+                val map = parseMap(customNames).toMutableMap()
+                if (renameText.isNotBlank()) map[item.id.toString()] = renameText.trim()
+                customNames = mapToString(map)
+                persistNames("custom_names", customNames)
+                renameTarget = null
+            }) { Text("Save name") } },
+            dismissButton = { TextButton(onClick = { renameTarget = null }) { Text("Cancel") } }
+        )
+    }
+}
+
+@Composable
+private fun SettingsRow(title: String, subtitle: String, icon: androidx.compose.ui.graphics.vector.ImageVector, trailing: @Composable () -> Unit) {
+    val surface = MaterialTheme.colorScheme.surface
+    Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(surface).padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+        Icon(icon, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(26.dp))
+        Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
+            Text(title, fontWeight = FontWeight.SemiBold)
+            Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f))
+        }
+        trailing()
+    }
+}
+
+@Composable
+private fun EmptyState(title: String, subtitle: String, accent: Color, muted: Color, modifier: Modifier = Modifier) {
+    Box(modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Icon(Icons.Rounded.PhotoLibrary, null, tint = accent, modifier = Modifier.size(48.dp))
+            Text(title, fontWeight = FontWeight.SemiBold)
+            Text(subtitle, color = muted)
+        }
+    }
+}
+
+@Composable
+private fun MediaGrid(
+    items: List<MediaItem>, favorites: Set<String>, customNames: String,
+    onOpen: (MediaItem) -> Unit, onFavorite: (MediaItem) -> Unit, onRename: (MediaItem) -> Unit,
+    accent: Color, surface: Color, modifier: Modifier = Modifier, isBin: Boolean = false,
+    onBin: (MediaItem) -> Unit = {}, onRestore: (MediaItem) -> Unit = {}, onDeleteFromBin: (MediaItem) -> Unit = {}
+) {
+    val names = remember(customNames) { parseMap(customNames) }
+    LazyVerticalGrid(
+        columns = GridCells.Fixed(3), modifier = modifier,
+        contentPadding = PaddingValues(start = 2.dp, end = 2.dp, top = 4.dp, bottom = 8.dp),
+        horizontalArrangement = Arrangement.spacedBy(2.dp), verticalArrangement = Arrangement.spacedBy(2.dp)
+    ) {
+        items(items = items, key = { "${it.isVideo}-${it.id}" }) { item ->
+            Box(Modifier.fillMaxWidth().height(132.dp).background(surface)) {
+                AsyncImage(model = item.uri, contentDescription = names[item.id.toString()] ?: item.name,
+                    modifier = Modifier.fillMaxSize().clickable { onOpen(item) }, contentScale = androidx.compose.ui.layout.ContentScale.Crop)
+                if (item.isVideo) Icon(Icons.Rounded.PlayCircle, null, tint = Color.White, modifier = Modifier.align(Alignment.Center).size(30.dp))
+                IconButton(onClick = { if (isBin) onRestore(item) else onFavorite(item) }, modifier = Modifier.align(Alignment.TopEnd).size(34.dp)) {
+                    Icon(if (isBin) Icons.Rounded.Restore else if (item.id.toString() in favorites) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
+                        contentDescription = if (isBin) "Restore" else "Favorite", tint = if (isBin || item.id.toString() in favorites) Color(0xFFFFD5D5) else Color.White)
+                }
+                if (isBin) {
+                    IconButton(onClick = { onDeleteFromBin(item) }, modifier = Modifier.align(Alignment.BottomEnd).size(34.dp)) { Icon(Icons.Rounded.Close, "Remove from bin", tint = Color.White) }
+                } else if (!item.isVideo) {
+                    IconButton(onClick = { onRename(item) }, modifier = Modifier.align(Alignment.BottomEnd).size(34.dp)) {
+                        Icon(Icons.Rounded.AutoAwesome, "AI name", tint = Color.White)
+                    }
+                    IconButton(onClick = { onBin(item) }, modifier = Modifier.align(Alignment.BottomStart).size(34.dp)) {
+                        Icon(Icons.Rounded.DeleteOutline, "Move to bin", tint = Color.White)
+                    }
                 }
             }
         }
     }
 }
 
-private fun friendlyDate(seconds: Long): String =
-    SimpleDateFormat("MMM d, yyyy", Locale.getDefault()).format(Date(seconds * 1000L))
-
-private fun loadPhotos(context: android.content.Context): List<PhotoItem> {
-    val collection = MediaStore.Images.Media.EXTERNAL_CONTENT_URI
-    val projection = arrayOf(
-        MediaStore.Images.Media._ID,
-        MediaStore.Images.Media.DISPLAY_NAME,
-        MediaStore.Images.Media.DATE_ADDED
-    )
-    val results = mutableListOf<PhotoItem>()
-    context.contentResolver.query(
-        collection,
-        projection,
-        null,
-        null,
-        "${MediaStore.Images.Media.DATE_ADDED} DESC"
-    )?.use { cursor ->
-        val idColumn = cursor.getColumnIndexOrThrow(MediaStore.Images.Media._ID)
-        val nameColumn = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.DISPLAY_NAME)
-        val dateColumn = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.DATE_ADDED)
-        while (cursor.moveToNext()) {
-            val id = cursor.getLong(idColumn)
-            results += PhotoItem(
-                id = id,
-                uri = ContentUris.withAppendedId(collection, id),
-                name = cursor.getString(nameColumn) ?: "Image",
-                dateAdded = cursor.getLong(dateColumn)
-            )
+@Composable
+private fun PhotoViewer(
+    item: MediaItem, index: Int, total: Int, title: String, label: String,
+    onClose: () -> Unit, onPrevious: () -> Unit, onNext: () -> Unit,
+    onFavorite: () -> Unit, isFavorite: Boolean, onSuggestName: () -> Unit,
+    aiWorking: Boolean, darkMode: Boolean
+) {
+    var scale by remember(item.id) { mutableFloatStateOf(1f) }
+    var offsetX by remember(item.id) { mutableFloatStateOf(0f) }
+    var offsetY by remember(item.id) { mutableFloatStateOf(0f) }
+    val bg = if (darkMode) Color.Black else Color(0xFFF8F8F4)
+    Box(Modifier.fillMaxSize().background(bg).windowInsetsPadding(WindowInsets.statusBars)) {
+        AsyncImage(
+            model = item.uri, contentDescription = title,
+            modifier = Modifier.fillMaxSize().pointerInput(item.id) {
+                detectTransformGestures { _, pan, zoom, _ ->
+                    scale = (scale * zoom).coerceIn(1f, 5f)
+                    offsetX += pan.x
+                    offsetY += pan.y
+                }
+            }.graphicsLayer(scaleX = scale, scaleY = scale, translationX = offsetX, translationY = offsetY),
+            contentScale = androidx.compose.ui.layout.ContentScale.Fit
+        )
+        Row(Modifier.align(Alignment.TopStart).fillMaxWidth().background(bg.copy(alpha = 0.72f)).padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onClose) { Icon(Icons.Rounded.ArrowBack, "Close photo", tint = if (darkMode) Color.White else Color.Black) }
+            Column(Modifier.weight(1f)) {
+                Text(title, color = if (darkMode) Color.White else Color.Black, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold)
+                Text("${index + 1} of $total", color = if (darkMode) Color.LightGray else Color.DarkGray, style = MaterialTheme.typography.bodySmall)
+            }
+            IconButton(onClick = onFavorite) { Icon(if (isFavorite) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder, "Favorite", tint = if (isFavorite) Color(0xFFFF8C9B) else if (darkMode) Color.White else Color.Black) }
+            IconButton(onClick = onSuggestName, enabled = !aiWorking) { if (aiWorking) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp) else Icon(Icons.Rounded.AutoAwesome, "Analyze with AI", tint = if (darkMode) Color.White else Color.Black) }
+        }
+        if (label.isNotBlank()) Text("AI: $label", Modifier.align(Alignment.BottomCenter).fillMaxWidth().background(bg.copy(alpha = 0.72f)).padding(12.dp), color = if (darkMode) Color.White else Color.Black)
+        Row(Modifier.align(Alignment.CenterStart).fillMaxHeight(), verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onPrevious, enabled = index > 0) { Icon(Icons.Rounded.ChevronLeft, "Previous photo", tint = if (darkMode) Color.White else Color.Black) }
+        }
+        Row(Modifier.align(Alignment.CenterEnd).fillMaxHeight(), verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onNext, enabled = index < total - 1) { Icon(Icons.Rounded.ChevronRight, "Next photo", tint = if (darkMode) Color.White else Color.Black) }
         }
     }
-    return results
+}
+
+private fun loadMedia(context: Context, includeVideos: Boolean): List<MediaItem> {
+    val output = mutableListOf<MediaItem>()
+    fun readCollection(collection: Uri, isVideo: Boolean) {
+        val idCol = MediaStore.MediaColumns._ID
+        val nameCol = MediaStore.MediaColumns.DISPLAY_NAME
+        val addedCol = MediaStore.MediaColumns.DATE_ADDED
+        val takenCol = MediaStore.MediaColumns.DATE_TAKEN
+        val bucketName = if (isVideo) MediaStore.Video.VideoColumns.BUCKET_DISPLAY_NAME else MediaStore.Images.ImageColumns.BUCKET_DISPLAY_NAME
+        val projection = arrayOf(idCol, nameCol, addedCol, takenCol, bucketName)
+        context.contentResolver.query(collection, projection, null, null, "$addedCol DESC")?.use { cursor ->
+            val idIndex = cursor.getColumnIndexOrThrow(idCol)
+            val nameIndex = cursor.getColumnIndexOrThrow(nameCol)
+            val addedIndex = cursor.getColumnIndexOrThrow(addedCol)
+            val takenIndex = cursor.getColumnIndex(takenCol)
+            val bucketIndex = cursor.getColumnIndex(bucketName)
+            while (cursor.moveToNext()) {
+                val id = cursor.getLong(idIndex)
+                output += MediaItem(
+                    id = id, uri = ContentUris.withAppendedId(collection, id),
+                    name = cursor.getString(nameIndex) ?: if (isVideo) "Video" else "Photo",
+                    dateAdded = cursor.getLong(addedIndex),
+                    dateTaken = if (takenIndex >= 0) cursor.getLong(takenIndex) else 0L,
+                    album = if (bucketIndex >= 0) cursor.getString(bucketIndex)?.takeIf { it.isNotBlank() } ?: "Other" else "Other",
+                    isVideo = isVideo
+                )
+            }
+        }
+    }
+    readCollection(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, false)
+    if (includeVideos) readCollection(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, true)
+    return output.sortedByDescending { it.dateAdded }
+}
+
+private fun inferYear(item: MediaItem): Int? {
+    if (item.dateTaken > 0L) {
+        val year = java.util.Calendar.getInstance().apply { timeInMillis = item.dateTaken }.get(java.util.Calendar.YEAR)
+        if (year in 1990..2100) return year
+    }
+    val match = Regex("(?<!\\d)(19\\d{2}|20\\d{2})(?!\\d)").find(item.name)
+    return match?.value?.toIntOrNull()
+}
+
+private fun suggestedBaseName(item: MediaItem): String {
+    val year = inferYear(item)?.toString()
+    val base = item.name.substringBeforeLast('.', item.name).replace(Regex("[^A-Za-z0-9]+"), "-").trim('-').take(40)
+    return listOf(year, base.ifBlank { "Photo" }).filterNotNull().joinToString("-") + ".jpg"
+}
+
+private fun parseMap(raw: String): Map<String, String> {
+    if (raw.isBlank()) return emptyMap()
+    return raw.split("\\n").mapNotNull { line ->
+        val at = line.indexOf('|')
+        if (at <= 0) null else line.substring(0, at) to line.substring(at + 1).replace("%7C", "|").replace("%0A", "\n")
+    }.toMap()
+}
+
+private fun mapToString(map: Map<String, String>): String = map.entries.joinToString("\\n") {
+    it.key + "|" + it.value.replace("|", "%7C").replace("\n", "%0A")
 }
