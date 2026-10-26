@@ -571,7 +571,7 @@ private fun PhotoFinderApp() {
                                             geminiAnswer = "Done — cleared the gallery search."
                                             true
                                         }
-                                        lower.contains("find ") || lower.startsWith("search ") || lower.startsWith("show me ") || lower.startsWith("look for ") || lower.startsWith("locate ") -> {
+                                        lower.contains("find ") || lower.startsWith("search ") || lower.startsWith("show ") || lower.startsWith("look for ") || lower.startsWith("locate ") || lower.startsWith("do i have ") || lower.startsWith("which photos") || lower.startsWith("which pictures") || lower.startsWith("any photos") || lower.startsWith("any pictures") || lower.startsWith("photos of ") || lower.startsWith("pictures of ") || lower.startsWith("images of ") -> {
                                             val term = extractGallerySearchTerm(request)
                                             if (term.isNotBlank()) {
                                                 visualSearchIds = emptySet()
@@ -619,6 +619,7 @@ private fun PhotoFinderApp() {
                                                             "I scanned $scanned photos, but the on-device image model found no confident matches for “$term”. Try a broader description such as “water”, “outdoor”, or “landscape”."
                                                         aiChat = aiChat + (false to response)
                                                     } catch (_: Exception) {
+                                                        visualSearchIds = null
                                                         val response = "I couldn't finish scanning the gallery. Check Photo Finder's photo permissions and try again."
                                                         status = response
                                                         aiChat = aiChat + (false to response)
