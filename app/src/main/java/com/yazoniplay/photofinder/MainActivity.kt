@@ -23,7 +23,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.weight
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
@@ -116,10 +115,15 @@ private fun PhotoFinderApp() {
     LaunchedEffect(hasPermission) {
         if (hasPermission) {
             loading = true
-            photos = withContext(Dispatchers.IO) { loadPhotos(context) }
+            photos = withContext(Dispatchers.IO) {
+                val savedIndex = context.getSharedPreferences("photo_finder_ocr", android.content.Context.MODE_PRIVATE)
+                loadPhotos(context).map { photo ->
+                    photo.copy(recognizedText = savedIndex.getString(photo.id.toString(), "") ?: "")
+                }
+            }
             loading = false
             status = if (photos.isEmpty()) "No photos found in the accessible gallery."
-            else "${photos.size} photos ready. Search names or index screenshot text."
+            else "${photos.size} photos ready. Search filenames or previously indexed screenshot text."
         }
     }
 
@@ -246,12 +250,17 @@ private fun PhotoFinderApp() {
                                     }
                                     recognizer.close()
                                     val byId = indexed.associateBy { it.id }
+                                    val savedIndex = context.getSharedPreferences("photo_finder_ocr", android.content.Context.MODE_PRIVATE)
+                                    with(savedIndex.edit()) {
+                                        indexed.forEach { item -> putString(item.id.toString(), item.recognizedText) }
+                                        apply()
+                                    }
                                     photos = photos.map { byId[it.id] ?: it }
                                     indexing = false
                                     status = if (candidates.isEmpty()) {
                                         "No screenshots were recognized by filename. Try searching by filename instead."
                                     } else {
-                                        "Indexed text in ${indexed.count { it.recognizedText.isNotBlank() }} of ${candidates.size} screenshots. Search above."
+                                        "Saved text from ${indexed.count { it.recognizedText.isNotBlank() }} of ${candidates.size} screenshots on this device. Search above."
                                     }
                                 }
                             },
