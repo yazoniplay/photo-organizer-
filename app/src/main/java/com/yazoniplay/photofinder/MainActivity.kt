@@ -574,11 +574,6 @@ private fun PhotoFinderApp() {
                                         lower.contains("find ") || lower.startsWith("search ") || lower.startsWith("show me ") || lower.startsWith("look for ") || lower.startsWith("locate ") -> {
                                             val term = extractGallerySearchTerm(request)
                                             if (term.isNotBlank()) {
-                                                page = Page.PHOTOS
-                                                selectedAlbum = null
-                                                showVideos = false
-                                                query = ""
-                                                searchOpen = false
                                                 visualSearchIds = emptySet()
                                                 scope.launch {
                                                     aiWorking = true
@@ -607,7 +602,16 @@ private fun PhotoFinderApp() {
                                                         aiLabels = mapToString(updated)
                                                         persistNames("ai_labels", aiLabels)
                                                         media = media.map { item -> item.copy(aiLabel = updated[item.id.toString()].orEmpty()) }
-                                                        visualSearchIds = matchedIds.toSet()
+                                                        if (matchedIds.isNotEmpty()) {
+                                                            visualSearchIds = matchedIds.toSet()
+                                                            page = Page.PHOTOS
+                                                            selectedAlbum = null
+                                                            showVideos = false
+                                                            query = ""
+                                                            searchOpen = false
+                                                        } else {
+                                                            visualSearchIds = null
+                                                        }
                                                         status = "Visual search finished: scanned $scanned photos; found ${matchedIds.size} possible matches for “$term”."
                                                         val response = if (matchedIds.isNotEmpty())
                                                             "I scanned $scanned photos for visual content related to “$term” and found ${matchedIds.size} possible match(es). They’re now shown in Photos."
