@@ -795,10 +795,10 @@ private fun PhotoFinderApp() {
                                 }
                             )
                         },
-                        shape = RoundedCornerShape(30.dp),
-                        color = (if (darkMode) Color(0xFF272B27) else Color.White).copy(alpha = if (darkMode) 0.30f else 0.38f),
-                        border = androidx.compose.foundation.BorderStroke(1.dp, (if (darkMode) Color.White else Color.Black).copy(alpha = 0.12f)),
-                        shadowElevation = 12.dp
+                        shape = RoundedCornerShape(36.dp),
+                        color = (if (darkMode) Color(0xFF343634) else Color(0xFFFDFDFD)).copy(alpha = if (darkMode) 0.22f else 0.30f),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, (if (darkMode) Color.White else Color.Black).copy(alpha = 0.22f)),
+                        shadowElevation = 20.dp
                     ) {
                         NavigationBar(
                             containerColor = Color.Transparent,
@@ -810,7 +810,13 @@ private fun PhotoFinderApp() {
                                 onClick = { page = Page.PHOTOS; selectedAlbum = null },
                                 icon = { Icon(Icons.Rounded.PhotoLibrary, null) },
                                 label = { Text("Photos") },
-                                colors = NavigationBarItemDefaults.colors(indicatorColor = accent.copy(alpha = 0.18f))
+                                colors = NavigationBarItemDefaults.colors(
+                                    indicatorColor = (if (darkMode) Color.White else Color.Black).copy(alpha = 0.14f),
+                                    selectedIconColor = if (darkMode) Color.White else Color.Black,
+                                    selectedTextColor = if (darkMode) Color.White else Color.Black,
+                                    unselectedIconColor = (if (darkMode) Color.White else Color.Black).copy(alpha = 0.66f),
+                                    unselectedTextColor = (if (darkMode) Color.White else Color.Black).copy(alpha = 0.66f)
+                                )
                             )
                             NavigationBarItem(
                                 selected = page == Page.ALBUMS,
@@ -1222,8 +1228,9 @@ private fun loadMedia(context: Context, includeVideos: Boolean): List<MediaItem>
 
 private fun extractGallerySearchTerm(request: String): String {
     var term = request.trim().lowercase(Locale.ROOT)
-    term = term.replace(Regex("^(please\\s+)?(can you\\s+|could you\\s+)?"), "")
-    term = term.replace(Regex("^(find|search for|search|show me|look for|locate)\\s+"), "")
+    term = term.replace(Regex("^(please\\s+)?(can you\\s+|could you\\s+|i want to\\s+|i need to\\s+)?"), "")
+    term = term.replace(Regex("^(please\\s+)?(find|search for|search|show me|look for|locate)\\s+"), "")
+    term = term.replace(Regex("^(me\\s+)"), "")
     term = term.replace(Regex("^(a|an|the|some|any)\\s+"), "")
     term = term.replace(Regex("^(photo|picture|image|pic|photos|pictures|images)\\s+"), "")
     term = term.replace(Regex("^(that (was|were) |which (was|were) )?(taken|shot|captured)\\s+(in|at|on|near)\\s+"), "")
