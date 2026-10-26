@@ -880,7 +880,7 @@ private fun PhotoViewer(
     onClose: () -> Unit, onPrevious: () -> Unit, onNext: () -> Unit,
     onFavorite: () -> Unit, isFavorite: Boolean, onSuggestName: () -> Unit,
     aiWorking: Boolean, darkMode: Boolean,
-    onAskGemini: () -> Unit,
+    onAskAI: () -> Unit,
     geminiBusy: Boolean
 ) {
     var scale by remember(item.id) { mutableFloatStateOf(1f) }
@@ -907,7 +907,7 @@ private fun PhotoViewer(
             }
             IconButton(onClick = onFavorite) { Icon(if (isFavorite) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder, "Favorite", tint = if (isFavorite) Color(0xFFFF8C9B) else if (darkMode) Color.White else Color.Black) }
             IconButton(onClick = onSuggestName, enabled = !aiWorking) { if (aiWorking) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp) else Icon(Icons.Rounded.AutoAwesome, "On-device labels", tint = if (darkMode) Color.White else Color.Black) }
-            IconButton(onClick = onAskGemini, enabled = !geminiBusy) { if (geminiBusy) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp) else Icon(Icons.Rounded.AutoAwesome, "Ask AI about photo", tint = if (darkMode) Color.White else Color.Black) }
+            IconButton(onClick = onAskAI, enabled = !geminiBusy) { if (geminiBusy) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp) else Icon(Icons.Rounded.AutoAwesome, "Ask AI about photo", tint = if (darkMode) Color.White else Color.Black) }
         }
         if (label.isNotBlank()) Text("AI: $label", Modifier.align(Alignment.BottomCenter).fillMaxWidth().background(bg.copy(alpha = 0.72f)).padding(12.dp), color = if (darkMode) Color.White else Color.Black)
         Row(Modifier.align(Alignment.CenterStart).fillMaxHeight(), verticalAlignment = Alignment.CenterVertically) {
