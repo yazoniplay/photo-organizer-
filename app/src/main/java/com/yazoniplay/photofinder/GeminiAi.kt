@@ -37,7 +37,7 @@ suspend fun askGemini(
     val payload = JSONObject()
         .put("contents", JSONArray().put(JSONObject().put("parts", parts)))
         .put("generationConfig", JSONObject().put("temperature", 0.4).put("maxOutputTokens", 900))
-    val connection = (URL("https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent")
+    val connection = (URL("https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent")
         .openConnection() as HttpURLConnection).apply {
         requestMethod = "POST"
         connectTimeout = 20000
