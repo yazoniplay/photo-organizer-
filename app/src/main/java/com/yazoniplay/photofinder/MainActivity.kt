@@ -17,6 +17,8 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -420,7 +422,7 @@ private fun PhotoFinderApp() {
                         Text("The library scan above is on-device. Gemini prompts and any photo you explicitly ask it to analyze are sent to Google for processing.", color = muted, style = MaterialTheme.typography.bodySmall)
                     }
                     Page.SETTINGS -> Column(
-                        Modifier.weight(1f).fillMaxWidth().padding(horizontal = 16.dp),
+                        Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp),
                         verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
                         SettingsRow("Appearance", "Choose your preferred theme", Icons.Rounded.DarkMode) {
