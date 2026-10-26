@@ -93,6 +93,7 @@ private fun PhotoFinderApp() {
     var indexing by remember { mutableStateOf(false) }
     var status by remember { mutableStateOf("") }
     var page by remember { mutableStateOf(Page.PHOTOS) }
+    var overflowMenuExpanded by remember { mutableStateOf(false) }
     var showVideos by remember { mutableStateOf(false) }
     var viewerIndex by remember { mutableStateOf<Int?>(null) }
     var renameTarget by remember { mutableStateOf<MediaItem?>(null) }
@@ -196,6 +197,38 @@ private fun PhotoFinderApp() {
                     if (page != Page.SETTINGS && page != Page.BIN && page != Page.ALBUMS) {
                         IconButton(onClick = { searchOpen = !searchOpen; if (!searchOpen) query = "" }) {
                             Icon(Icons.Rounded.Search, contentDescription = "Search")
+                        }
+                    }
+                    Box {
+                        IconButton(onClick = { overflowMenuExpanded = true }) {
+                            Icon(Icons.Rounded.MoreVert, contentDescription = "More options")
+                        }
+                        DropdownMenu(
+                            expanded = overflowMenuExpanded,
+                            onDismissRequest = { overflowMenuExpanded = false }
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text("Bin") },
+                                leadingIcon = { Icon(Icons.Rounded.DeleteOutline, contentDescription = null) },
+                                onClick = {
+                                    overflowMenuExpanded = false
+                                    page = Page.BIN
+                                    selectedAlbum = null
+                                    searchOpen = false
+                                    query = ""
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Settings") },
+                                leadingIcon = { Icon(Icons.Rounded.Settings, contentDescription = null) },
+                                onClick = {
+                                    overflowMenuExpanded = false
+                                    page = Page.SETTINGS
+                                    selectedAlbum = null
+                                    searchOpen = false
+                                    query = ""
+                                }
+                            )
                         }
                     }
                 }
@@ -343,8 +376,6 @@ private fun PhotoFinderApp() {
                     NavigationBarItem(selected = page == Page.PHOTOS, onClick = { page = Page.PHOTOS; selectedAlbum = null }, icon = { Icon(Icons.Rounded.PhotoLibrary, null) }, label = { Text("Photos") })
                     NavigationBarItem(selected = page == Page.ALBUMS, onClick = { page = Page.ALBUMS; selectedAlbum = null }, icon = { Icon(Icons.Rounded.Collections, null) }, label = { Text("Albums") })
                     NavigationBarItem(selected = page == Page.FAVORITES, onClick = { page = Page.FAVORITES }, icon = { Icon(Icons.Rounded.Favorite, null) }, label = { Text("Favorites") })
-                    NavigationBarItem(selected = page == Page.BIN, onClick = { page = Page.BIN; selectedAlbum = null }, icon = { Icon(Icons.Rounded.DeleteOutline, null) }, label = { Text("Bin") })
-                    NavigationBarItem(selected = page == Page.SETTINGS, onClick = { page = Page.SETTINGS }, icon = { Icon(Icons.Rounded.Settings, null) }, label = { Text("Settings") })
                 }
             }
         }
