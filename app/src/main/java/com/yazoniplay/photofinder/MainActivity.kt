@@ -1,6 +1,7 @@
 package com.yazoniplay.photofinder
 
 import android.Manifest
+import android.app.RecoverableSecurityException
 import android.content.ContentUris
 import android.content.Context
 import android.content.Intent
@@ -12,8 +13,17 @@ import android.provider.MediaStore
 import android.provider.OpenableColumns
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.IntentSenderRequest
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTransformGestures
@@ -30,6 +40,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -102,6 +113,8 @@ private fun PhotoFinderApp() {
     var viewerIndex by remember { mutableStateOf<Int?>(null) }
     var renameTarget by remember { mutableStateOf<MediaItem?>(null) }
     var renameText by remember { mutableStateOf("") }
+    var confirmDeleteTarget by remember { mutableStateOf<MediaItem?>(null) }
+    var deleteBusy by remember { mutableStateOf(false) }
     var aiWorking by remember { mutableStateOf(false) }
     var geminiKey by remember { mutableStateOf(prefs.getString("gemini_api_key", "") ?: "") }
     var geminiPrompt by remember { mutableStateOf("") }
@@ -127,6 +140,61 @@ private fun PhotoFinderApp() {
         hasImagePermission = result[imagePermission] == true || ContextCompat.checkSelfPermission(context, imagePermission) == PackageManager.PERMISSION_GRANTED
         hasVideoPermission = result[videoPermission] == true || ContextCompat.checkSelfPermission(context, videoPermission) == PackageManager.PERMISSION_GRANTED
         if (!hasImagePermission) status = "Allow photo access to show your gallery."
+    }
+
+    fun finishPermanentDelete(item: MediaItem) {
+        val key = item.id.toString()
+        media = media.filterNot { it.id == item.id }
+        bin = bin - key
+        favorites = favorites - key
+        customNames = parseMap(customNames).toMutableMap().also { it.remove(key) }.let { mapToString(it) }
+        aiLabels = parseMap(aiLabels).toMutableMap().also { it.remove(key) }.let { mapToString(it) }
+        persistSet("bin", bin)
+        persistSet("favorites", favorites)
+        persistNames("custom_names", customNames)
+        persistNames("ai_labels", aiLabels)
+        context.getSharedPreferences("photo_finder_ocr", Context.MODE_PRIVATE).edit().remove(key).apply()
+        confirmDeleteTarget = null
+        deleteBusy = false
+        status = "Item permanently deleted from your device."
+    }
+
+    val deletePermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { result ->
+        val item = confirmDeleteTarget
+        if (result.resultCode == android.app.Activity.RESULT_OK && item != null) {
+            finishPermanentDelete(item)
+            scope.launch { media = withContext(Dispatchers.IO) { loadMedia(context, hasVideoPermission) } }
+        } else {
+            deleteBusy = false
+            status = "Nothing was deleted. Your item is still in the Bin."
+        }
+    }
+
+    fun requestPermanentDelete(item: MediaItem) {
+        if (deleteBusy) return
+        deleteBusy = true
+        scope.launch {
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                    val request = MediaStore.createDeleteRequest(context.contentResolver, listOf(item.uri))
+                    deletePermissionLauncher.launch(IntentSenderRequest.Builder(request.intentSender).build())
+                } else {
+                    try {
+                        val rows = withContext(Dispatchers.IO) { context.contentResolver.delete(item.uri, null, null) }
+                        if (rows > 0) finishPermanentDelete(item)
+                        else {
+                            deleteBusy = false
+                            status = "Android did not delete this item. It is still in the Bin."
+                        }
+                    } catch (e: RecoverableSecurityException) {
+                        deletePermissionLauncher.launch(IntentSenderRequest.Builder(e.userAction.actionIntent.intentSender).build())
+                    }
+                }
+            } catch (e: Exception) {
+                deleteBusy = false
+                status = e.message ?: "Could not delete this item. It remains in the Bin."
+            }
+        }
     }
 
     fun persistSet(key: String, values: Set<String>) {
@@ -638,7 +706,7 @@ private fun PhotoFinderApp() {
                                 }
                             }
                             loading -> Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
-                            page == Page.BIN && activeItems.isEmpty() -> EmptyState("Your bin is empty", "Items you hide from the app will appear here.", accent, muted, Modifier.weight(1f))
+                            page == Page.BIN && activeItems.isEmpty() -> EmptyState("Your bin is empty", "Items you move here stay on your phone until you choose to permanently delete them.", accent, muted, Modifier.weight(1f))
                             activeItems.isEmpty() -> EmptyState(if (query.isBlank()) "Nothing here yet" else "No matching items", "Try another search or switch between Photos and Videos.", accent, muted, Modifier.weight(1f))
                             else -> MediaGrid(
                                 activeItems, favorites, customNames,
@@ -659,11 +727,7 @@ private fun PhotoFinderApp() {
                                 },
                                 accent = accent, surface = surface, modifier = Modifier.weight(1f), isBin = page == Page.BIN,
                                 onRestore = { item -> bin = bin - item.id.toString(); persistSet("bin", bin) },
-                                onDeleteFromBin = { item ->
-                                    // The app removes its own bin marker; the source media file is never permanently deleted.
-                                    bin = bin - item.id.toString()
-                                    persistSet("bin", bin)
-                                }
+                                onDeleteFromBin = { item -> confirmDeleteTarget = item }
                             )
                         }
                     }
@@ -780,6 +844,51 @@ private fun PhotoFinderApp() {
         }
     }
 
+    AnimatedVisibility(
+        visible = confirmDeleteTarget != null,
+        enter = fadeIn() + scaleIn(initialScale = 0.92f, animationSpec = spring(dampingRatio = 0.78f, stiffness = 420f)),
+        exit = fadeOut() + scaleOut(targetScale = 0.94f, animationSpec = spring(dampingRatio = 0.82f, stiffness = 500f))
+    ) {
+        val target = confirmDeleteTarget
+        if (target != null) {
+            androidx.compose.ui.window.Dialog(onDismissRequest = { if (!deleteBusy) confirmDeleteTarget = null }) {
+                Surface(
+                    modifier = Modifier.fillMaxWidth().animateContentSize(animationSpec = spring(dampingRatio = 0.78f, stiffness = 360f)),
+                    shape = RoundedCornerShape(30.dp), color = surface,
+                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFFF6B6B).copy(alpha = 0.35f)),
+                    shadowElevation = 24.dp
+                ) {
+                    Column(Modifier.padding(22.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                        Box(Modifier.size(58.dp).clip(CircleShape).background(Color(0xFFFF5C67).copy(alpha = 0.15f)), contentAlignment = Alignment.Center) {
+                            Icon(Icons.Rounded.DeleteForever, null, tint = Color(0xFFFF727C), modifier = Modifier.size(30.dp))
+                        }
+                        Text("Delete this for real?", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                        Text(
+                            "“${parseMap(customNames)[target.id.toString()] ?: target.name}” will be removed from your device, not just Photo Finder. This may be difficult or impossible to undo. Android will show its own final confirmation.",
+                            color = muted, style = MaterialTheme.typography.bodyMedium
+                        )
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            OutlinedButton(onClick = { confirmDeleteTarget = null }, enabled = !deleteBusy, modifier = Modifier.weight(1f), shape = RoundedCornerShape(18.dp)) {
+                                Text("Keep it")
+                            }
+                            Button(
+                                onClick = { requestPermanentDelete(target) }, enabled = !deleteBusy,
+                                modifier = Modifier.weight(1f),
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE74755), contentColor = Color.White),
+                                shape = RoundedCornerShape(18.dp)
+                            ) {
+                                if (deleteBusy) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = Color.White)
+                                else Icon(Icons.Rounded.DeleteForever, null, modifier = Modifier.size(18.dp))
+                                Spacer(Modifier.width(6.dp))
+                                Text(if (deleteBusy) "Waiting…" else "Delete forever")
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     if (showGeminiPhotoAnswer) {
         AlertDialog(
             onDismissRequest = { showGeminiPhotoAnswer = false },
@@ -851,9 +960,17 @@ private fun MediaGrid(
         horizontalArrangement = Arrangement.spacedBy(2.dp), verticalArrangement = Arrangement.spacedBy(2.dp)
     ) {
         items(items = items, key = { "${it.isVideo}-${it.id}" }) { item ->
-            Box(Modifier.fillMaxWidth().height(132.dp).background(surface)) {
+            var entered by remember(item.id) { mutableStateOf(false) }
+            LaunchedEffect(item.id) { entered = true }
+            val itemScale by animateFloatAsState(if (entered) 1f else 0.92f, animationSpec = spring(dampingRatio = 0.72f, stiffness = 320f), label = "photo-card-scale")
+            val itemAlpha by animateFloatAsState(if (entered) 1f else 0f, animationSpec = spring(dampingRatio = 0.82f, stiffness = 300f), label = "photo-card-alpha")
+            Box(
+                Modifier.fillMaxWidth().height(132.dp).background(surface)
+                    .graphicsLayer(scaleX = itemScale, scaleY = itemScale).alpha(itemAlpha)
+                    .animateContentSize(animationSpec = spring(dampingRatio = 0.76f, stiffness = 360f))
+            ) {
                 AsyncImage(model = item.uri, contentDescription = names[item.id.toString()] ?: item.name,
-                    modifier = Modifier.fillMaxSize().clickable { onOpen(item) }, contentScale = androidx.compose.ui.layout.ContentScale.Crop)
+                    modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(13.dp)).clickable { onOpen(item) }, contentScale = androidx.compose.ui.layout.ContentScale.Crop)
                 if (item.isVideo) Icon(Icons.Rounded.PlayCircle, null, tint = Color.White, modifier = Modifier.align(Alignment.Center).size(30.dp))
                 IconButton(onClick = { if (isBin) onRestore(item) else onFavorite(item) }, modifier = Modifier.align(Alignment.TopEnd).size(34.dp)) {
                     Icon(if (isBin) Icons.Rounded.Restore else if (item.id.toString() in favorites) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
