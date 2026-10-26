@@ -201,7 +201,7 @@ private fun PhotoFinderApp() {
                         Text(
                             when (page) {
                                 Page.SETTINGS -> "Make Photo Finder yours"
-                                Page.AI -> "Private, on-device photo intelligence"
+                                Page.AI -> "Your AI assistant for the photo library"
                                 Page.ALBUMS -> if (selectedAlbum == null) "${media.map { it.album }.distinct().size} folders" else "${activeItems.size} items"
                                 else -> "${activeItems.size} items"
                             },
@@ -407,6 +407,48 @@ private fun PhotoFinderApp() {
                                         }
                                         lower.contains("setting") && (lower.contains("open") || lower.contains("go to")) -> {
                                             page = Page.SETTINGS; selectedAlbum = null; searchOpen = false; query = ""; true
+                                        }
+                                        (lower.contains("favorite") || lower.contains("star")) && !lower.contains("show") && !lower.contains("open") -> {
+                                            val term = lower.substringAfter("favorite", lower.substringAfter("star", "all photos"))
+                                                .replace("all photos", "").replace("all", "").replace("the", "").trim()
+                                            val targets = media.filter { item ->
+                                                item.id.toString() !in bin && (
+                                                    term.isBlank() || term == "photos" ||
+                                                    item.name.contains(term, true) || item.album.contains(term, true) ||
+                                                    item.recognizedText.contains(term, true) ||
+                                                    parseMap(aiLabels)[item.id.toString()].orEmpty().contains(term, true)
+                                                )
+                                            }
+                                            favorites = favorites + targets.map { it.id.toString() }
+                                            persistSet("favorites", favorites)
+                                            geminiAnswer = "Done — added ${targets.size} matching photo(s) to Favorites. You can undo this from the Favorites view."
+                                            true
+                                        }
+                                        (lower.contains("move") && lower.contains("bin") || lower.contains("hide")) -> {
+                                            val term = lower.substringAfter("hide", lower.substringAfter("bin", "all photos"))
+                                                .replace("all photos", "").replace("all", "").replace("photos", "").trim()
+                                            val targets = media.filter { item ->
+                                                item.id.toString() !in bin && (
+                                                    term.isBlank() || item.name.contains(term, true) || item.album.contains(term, true) ||
+                                                    item.recognizedText.contains(term, true) || parseMap(aiLabels)[item.id.toString()].orEmpty().contains(term, true)
+                                                )
+                                            }
+                                            bin = bin + targets.map { it.id.toString() }
+                                            persistSet("bin", bin)
+                                            geminiAnswer = "Done — hid ${targets.size} matching item(s) in Photo Finder's Bin. Original files on your device were not deleted."
+                                            true
+                                        }
+                                        lower.contains("restore all") -> {
+                                            val restored = bin.size
+                                            bin = emptySet()
+                                            persistSet("bin", bin)
+                                            geminiAnswer = "Done — restored $restored item(s) from Photo Finder's Bin. Original files were never deleted."
+                                            true
+                                        }
+                                        lower.contains("clear search") -> {
+                                            query = ""; searchOpen = false; page = Page.PHOTOS; selectedAlbum = null
+                                            geminiAnswer = "Done — cleared the gallery search."
+                                            true
                                         }
                                         lower.contains("find ") || lower.startsWith("search ") || lower.startsWith("show me ") -> {
                                             val term = request.substringAfter("find ", request.substringAfter("search ", request.substringAfter("show me ", ""))).trim()
