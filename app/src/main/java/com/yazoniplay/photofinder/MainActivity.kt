@@ -1183,11 +1183,14 @@ private fun extractGallerySearchTerm(request: String): String {
     var term = request.trim().lowercase(Locale.ROOT)
     term = term.replace(Regex("^(please\\s+)?(can you\\s+|could you\\s+)?"), "")
     term = term.replace(Regex("^(find|search for|search|show me|look for|locate)\\s+"), "")
-    term = term.replace(Regex("^(a|an|the)\\s+"), "")
+    term = term.replace(Regex("^(a|an|the|some|any)\\s+"), "")
     term = term.replace(Regex("^(photo|picture|image|pic|photos|pictures|images)\\s+"), "")
-    term = term.replace(Regex("^(of|with|in|on|at|from|showing|containing)\\s+"), "")
-    term = term.replace(Regex("^(a|an|the)\\s+"), "")
-    term = term.replace(Regex("\\s+(please|for me)$"), "").trim()
+    term = term.replace(Regex("^(that (was|were) |which (was|were) )?(taken|shot|captured)\\s+(in|at|on|near)\\s+"), "")
+    term = term.replace(Regex("^(of|with|in|on|at|from|near|showing|containing|that show|that has|that have)\\s+"), "")
+    term = term.replace(Regex("^(a|an|the|some|any)\\s+"), "")
+    term = term.replace(Regex("^(taken|shot|captured)\\s+(in|at|on|near)\\s+"), "")
+    term = term.replace(Regex("^(in|at|on|near|from)\\s+"), "")
+    term = term.replace(Regex("\\s+(please|for me|in my gallery|in my photos)$"), "").trim()
     return term
 }
 
