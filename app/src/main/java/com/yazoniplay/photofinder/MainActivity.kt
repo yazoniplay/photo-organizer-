@@ -170,6 +170,25 @@ private fun PhotoFinderApp() {
         }
     }
 
+    val legacyWritePermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        val item = confirmDeleteTarget
+        if (granted && item != null) {
+            scope.launch {
+                try {
+                    val rows = withContext(Dispatchers.IO) { context.contentResolver.delete(item.uri, null, null) }
+                    if (rows > 0) finishPermanentDelete(item)
+                    else { deleteBusy = false; status = "Android did not delete this item. It is still in the Bin." }
+                } catch (e: Exception) {
+                    deleteBusy = false
+                    status = e.message ?: "Could not delete this item."
+                }
+            }
+        } else {
+            deleteBusy = false
+            status = "Storage permission was not granted. The item is still in the Bin."
+        }
+    }
+
     fun requestPermanentDelete(item: MediaItem) {
         if (deleteBusy) return
         deleteBusy = true
@@ -178,6 +197,10 @@ private fun PhotoFinderApp() {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                     val request = MediaStore.createDeleteRequest(context.contentResolver, listOf(item.uri))
                     deletePermissionLauncher.launch(IntentSenderRequest.Builder(request.intentSender).build())
+                } else if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q &&
+                    ContextCompat.checkSelfPermission(context, Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED
+                ) {
+                    legacyWritePermissionLauncher.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
                 } else {
                     try {
                         val rows = withContext(Dispatchers.IO) { context.contentResolver.delete(item.uri, null, null) }
