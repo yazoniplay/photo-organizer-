@@ -101,6 +101,12 @@ private fun PhotoFinderApp() {
     var renameTarget by remember { mutableStateOf<MediaItem?>(null) }
     var renameText by remember { mutableStateOf("") }
     var aiWorking by remember { mutableStateOf(false) }
+    var geminiKey by remember { mutableStateOf(prefs.getString("gemini_api_key", "") ?: "") }
+    var geminiPrompt by remember { mutableStateOf("") }
+    var geminiAnswer by remember { mutableStateOf("") }
+    var geminiBusy by remember { mutableStateOf(false) }
+    var geminiPhotoAnswer by remember { mutableStateOf("") }
+    var showGeminiPhotoAnswer by remember { mutableStateOf(false) }
     var aiProgress by remember { mutableStateOf(0) }
     var aiTotal by remember { mutableStateOf(0) }
     var selectedAlbum by remember { mutableStateOf<String?>(null) }
@@ -366,7 +372,52 @@ private fun PhotoFinderApp() {
                                 }
                             }
                         }
-                        Text("Processing runs on your device. This uses image-label recognition, not a cloud chatbot; results can be imperfect.", color = muted, style = MaterialTheme.typography.bodySmall)
+                        Divider(color = muted.copy(alpha = 0.25f))
+                        Text("Ask Gemini", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                        Text("Ask for help organizing your library. Your prompt and limited filename/label context are sent to Google Gemini.", color = muted, style = MaterialTheme.typography.bodySmall)
+                        OutlinedTextField(
+                            value = geminiPrompt,
+                            onValueChange = { geminiPrompt = it },
+                            modifier = Modifier.fillMaxWidth(),
+                            label = { Text("What do you want help with?") },
+                            placeholder = { Text("e.g. Help me organize travel photos…") },
+                            minLines = 2,
+                            maxLines = 4
+                        )
+                        Button(
+                            enabled = !geminiBusy && geminiPrompt.isNotBlank() && geminiKey.isNotBlank(),
+                            onClick = {
+                                scope.launch {
+                                    geminiBusy = true
+                                    geminiAnswer = ""
+                                    try {
+                                        val libraryContext = media.filter { it.id.toString() !in bin }.take(100)
+                                            .joinToString("\n") { item ->
+                                                "${parseMap(customNames)[item.id.toString()] ?: item.name}: ${parseMap(aiLabels)[item.id.toString()].orEmpty()}"
+                                            }
+                                        geminiAnswer = askGemini(
+                                            context, geminiKey,
+                                            "You are Photo Finder's helpful photo-library assistant. Be accurate and concise. Do not claim to see images unless image data is included. Library filename and on-device label context (may be incomplete):\n$libraryContext\n\nUser request: $geminiPrompt"
+                                        )
+                                    } catch (e: Exception) {
+                                        geminiAnswer = e.message ?: "Gemini request failed. Check the API key and internet connection."
+                                    } finally {
+                                        geminiBusy = false
+                                    }
+                                }
+                            }
+                        ) {
+                            if (geminiBusy) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                            else Icon(Icons.Rounded.AutoAwesome, null)
+                            Spacer(Modifier.width(8.dp))
+                            Text(if (geminiBusy) "Thinking…" else "Ask Gemini")
+                        }
+                        if (geminiAnswer.isNotBlank()) {
+                            Surface(color = surface, shape = RoundedCornerShape(16.dp)) {
+                                Text(geminiAnswer, Modifier.fillMaxWidth().padding(16.dp), color = MaterialTheme.colorScheme.onSurface)
+                            }
+                        }
+                        Text("The library scan above is on-device. Gemini prompts and any photo you explicitly ask it to analyze are sent to Google for processing.", color = muted, style = MaterialTheme.typography.bodySmall)
                     }
                     Page.SETTINGS -> Column(
                         Modifier.weight(1f).fillMaxWidth().padding(horizontal = 16.dp),
@@ -383,10 +434,32 @@ private fun PhotoFinderApp() {
                                 })
                             }
                         }
-                        SettingsRow("AI features", "On-device image labels and smart names", Icons.Rounded.AutoAwesome) {
-                            Text("On-device", color = accent, style = MaterialTheme.typography.labelLarge)
+                        SettingsRow("AI features", "On-device labels plus optional Gemini AI", Icons.Rounded.AutoAwesome) {
+                            Text(if (geminiKey.isBlank()) "Set up" else "Ready", color = accent, style = MaterialTheme.typography.labelLarge)
                         }
-                        SettingsRow("Privacy", "Images stay on this device", Icons.Rounded.Lock) {
+                        Text("Gemini API key", fontWeight = FontWeight.SemiBold)
+                        OutlinedTextField(
+                            value = geminiKey,
+                            onValueChange = { geminiKey = it },
+                            modifier = Modifier.fillMaxWidth(),
+                            label = { Text("Paste your API key") },
+                            placeholder = { Text("Gemini API key") },
+                            singleLine = true
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Button(onClick = {
+                                prefs.edit().putString("gemini_api_key", geminiKey.trim()).apply()
+                                geminiKey = geminiKey.trim()
+                                status = "Gemini key saved on this device."
+                            }) { Text("Save key") }
+                            TextButton(onClick = {
+                                geminiKey = ""
+                                prefs.edit().remove("gemini_api_key").apply()
+                                status = "Gemini key removed."
+                            }) { Text("Remove key") }
+                        }
+                        Text("Gemini requires internet and may have usage limits or charges. Never share your key. This prototype stores it locally; a public production app should use a secure backend instead of embedding API credentials.", color = muted, style = MaterialTheme.typography.bodySmall)
+                        SettingsRow("Privacy", "Photos are only sent to Gemini when you explicitly ask it to analyze one.", Icons.Rounded.Lock) {
                             Icon(Icons.Rounded.CheckCircle, null, tint = accent)
                         }
                         SettingsRow("Library", "${media.size} items · ${media.map { it.album }.distinct().size} folders", Icons.Rounded.Collections) {
