@@ -856,7 +856,7 @@ private fun PhotoFinderApp() {
                                 viewerItems[index].uri
                             )
                         } catch (e: Exception) {
-                            geminiPhotoAnswer = e.message ?: "Gemini could not analyze this photo."
+                            geminiPhotoAnswer = e.message ?: "Could not analyze this photo. Check your AI service settings and internet connection."
                         } finally {
                             geminiBusy = false
                             showGeminiPhotoAnswer = true
