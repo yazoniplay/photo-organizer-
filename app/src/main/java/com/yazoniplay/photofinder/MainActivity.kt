@@ -310,7 +310,7 @@ private fun PhotoFinderApp() {
                         )
                     }
                     if (page != Page.SETTINGS && page != Page.BIN && page != Page.ALBUMS && page != Page.AI) {
-                        IconButton(onClick = { searchOpen = !searchOpen; if (!searchOpen) query = "" }) {
+                        IconButton(onClick = { searchOpen = !searchOpen; query = ""; visualSearchIds = null }) {
                             Icon(Icons.Rounded.Search, contentDescription = "Search")
                         }
                     }
@@ -823,14 +823,26 @@ private fun PhotoFinderApp() {
                                 onClick = { page = Page.ALBUMS; selectedAlbum = null },
                                 icon = { Icon(Icons.Rounded.Collections, null) },
                                 label = { Text("Albums") },
-                                colors = NavigationBarItemDefaults.colors(indicatorColor = accent.copy(alpha = 0.18f))
+                                colors = NavigationBarItemDefaults.colors(
+                                    indicatorColor = (if (darkMode) Color.White else Color.Black).copy(alpha = 0.14f),
+                                    selectedIconColor = if (darkMode) Color.White else Color.Black,
+                                    selectedTextColor = if (darkMode) Color.White else Color.Black,
+                                    unselectedIconColor = (if (darkMode) Color.White else Color.Black).copy(alpha = 0.66f),
+                                    unselectedTextColor = (if (darkMode) Color.White else Color.Black).copy(alpha = 0.66f)
+                                )
                             )
                             NavigationBarItem(
                                 selected = page == Page.FAVORITES,
                                 onClick = { page = Page.FAVORITES },
                                 icon = { Icon(Icons.Rounded.Favorite, null) },
                                 label = { Text("Favorites") },
-                                colors = NavigationBarItemDefaults.colors(indicatorColor = accent.copy(alpha = 0.18f))
+                                colors = NavigationBarItemDefaults.colors(
+                                    indicatorColor = (if (darkMode) Color.White else Color.Black).copy(alpha = 0.14f),
+                                    selectedIconColor = if (darkMode) Color.White else Color.Black,
+                                    selectedTextColor = if (darkMode) Color.White else Color.Black,
+                                    unselectedIconColor = (if (darkMode) Color.White else Color.Black).copy(alpha = 0.66f),
+                                    unselectedTextColor = (if (darkMode) Color.White else Color.Black).copy(alpha = 0.66f)
+                                )
                             )
                         }
                     }
