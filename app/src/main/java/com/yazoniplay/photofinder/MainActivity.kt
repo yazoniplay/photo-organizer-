@@ -466,7 +466,7 @@ private fun PhotoFinderApp() {
                                 shape = RoundedCornerShape(24.dp)
                             )
                             FilledIconButton(
-                                enabled = !geminiBusy && geminiPrompt.isNotBlank(),
+                                enabled = !geminiBusy && !aiWorking && geminiPrompt.isNotBlank(),
                                 onClick = {
                                     val request = geminiPrompt.trim()
                                     geminiPrompt = ""
