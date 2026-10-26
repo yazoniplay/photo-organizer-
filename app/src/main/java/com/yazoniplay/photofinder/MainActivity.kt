@@ -47,6 +47,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
@@ -815,11 +816,16 @@ private fun PhotoFinderApp() {
                         border = androidx.compose.foundation.BorderStroke(1.dp, (if (darkMode) Color.White else Color.Black).copy(alpha = 0.28f)),
                         shadowElevation = 28.dp
                     ) {
-                        NavigationBar(
-                            containerColor = Color.Transparent,
-                            tonalElevation = 0.dp,
-                            modifier = Modifier.height(72.dp)
-                        ) {
+                        Box(Modifier.fillMaxWidth().clip(RoundedCornerShape(36.dp))) {
+                            Box(
+                                Modifier.fillMaxWidth().height(34.dp)
+                                    .background(Brush.verticalGradient(listOf(Color.White.copy(alpha = if (darkMode) 0.13f else 0.46f), Color.Transparent)))
+                            )
+                            NavigationBar(
+                                containerColor = Color.Transparent,
+                                tonalElevation = 0.dp,
+                                modifier = Modifier.height(72.dp)
+                            ) {
                             NavigationBarItem(
                                 selected = page == Page.PHOTOS,
                                 onClick = { page = Page.PHOTOS; selectedAlbum = null },
@@ -859,6 +865,7 @@ private fun PhotoFinderApp() {
                                     unselectedTextColor = (if (darkMode) Color.White else Color.Black).copy(alpha = 0.66f)
                                 )
                             )
+                            }
                         }
                     }
                 }
