@@ -49,6 +49,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.viewinterop.AndroidView
+import android.widget.VideoView
+import android.widget.MediaController
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -104,6 +107,8 @@ private fun PhotoFinderApp() {
     var darkMode by remember { mutableStateOf(prefs.getBoolean("dark_mode", true)) }
     var media by remember { mutableStateOf<List<MediaItem>>(emptyList()) }
     var query by remember { mutableStateOf("") }
+    var visualSearchIds by remember { mutableStateOf<Set<String>?>(null) }
+    var videoViewer by remember { mutableStateOf<MediaItem?>(null) }
     var searchOpen by remember { mutableStateOf(false) }
     var loading by remember { mutableStateOf(false) }
     var indexing by remember { mutableStateOf(false) }
@@ -254,6 +259,7 @@ private fun PhotoFinderApp() {
         }
         if (page == Page.PHOTOS) list = list.filter { it.isVideo == showVideos }
         if (selectedAlbum != null && page == Page.ALBUMS) list = list.filter { it.album == selectedAlbum }
+        if (visualSearchIds != null && page == Page.PHOTOS && !showVideos) list = list.filter { it.id.toString() in visualSearchIds.orEmpty() }
         if (query.isNotBlank()) list = list.filter {
             (nameMap[it.id.toString()] ?: it.name).contains(query, true) ||
                 it.album.contains(query, true) || it.recognizedText.contains(query, true) ||
@@ -303,12 +309,12 @@ private fun PhotoFinderApp() {
                             style = MaterialTheme.typography.bodyMedium, color = muted
                         )
                     }
-                    if (page != Page.SETTINGS && page != Page.BIN && page != Page.ALBUMS) {
+                    if (page != Page.SETTINGS && page != Page.BIN && page != Page.ALBUMS && page != Page.AI) {
                         IconButton(onClick = { searchOpen = !searchOpen; if (!searchOpen) query = "" }) {
                             Icon(Icons.Rounded.Search, contentDescription = "Search")
                         }
                     }
-                    Box {
+                    if (page != Page.AI) Box {
                         IconButton(onClick = { overflowMenuExpanded = true }) {
                             Icon(Icons.Rounded.MoreVert, contentDescription = "More options")
                         }
@@ -353,9 +359,9 @@ private fun PhotoFinderApp() {
                     }
                 }
 
-                if (searchOpen && page != Page.SETTINGS) {
+                if (searchOpen && page != Page.SETTINGS && page != Page.AI) {
                     OutlinedTextField(
-                        value = query, onValueChange = { query = it },
+                        value = query, onValueChange = { query = it; visualSearchIds = null },
                         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
                         singleLine = true, placeholder = { Text("Search names, folders or text in screenshots") },
                         leadingIcon = { Icon(Icons.Rounded.Search, contentDescription = null) },
@@ -412,10 +418,10 @@ private fun PhotoFinderApp() {
                                 if (aiChat.isEmpty()) {
                                     Spacer(Modifier.height(20.dp))
                                     Icon(Icons.Rounded.AutoAwesome, null, tint = accent, modifier = Modifier.size(34.dp))
-                                    Text("What do you want to do?", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
-                                    Text("Ask naturally. I can navigate Photo Finder, search your library, switch views, and help interpret your photos. For AI answers, configure your AI provider in Settings.", color = muted)
+                                    Text("Search by what is in the picture", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
+                                    Text("Your photos can have numbered filenames. Describe the scene or object and I’ll scan the image contents instead of relying on filenames.", color = muted)
                                     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                        listOf("Find screenshots", "Show my favorites", "Open albums", "Show videos").forEach { suggestion ->
+                                        listOf("Find photos at a beach", "Find dogs", "Find cars", "Find sunsets").forEach { suggestion ->
                                             SuggestionChip(onClick = { geminiPrompt = suggestion }, label = { Text(suggestion) })
                                         }
                                     }
@@ -448,23 +454,6 @@ private fun PhotoFinderApp() {
                             }
                         if (aiChat.isEmpty()) {
                             Text("Try asking", color = muted, style = MaterialTheme.typography.labelMedium)
-                        }
-                        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            listOf("Photos", "Albums", "Favorites", "Videos", "Settings").forEach { action ->
-                                AssistChip(
-                                    onClick = {
-                                        when (action) {
-                                            "Photos" -> { page = Page.PHOTOS; selectedAlbum = null; showVideos = false; searchOpen = false; query = "" }
-                                            "Albums" -> { page = Page.ALBUMS; selectedAlbum = null; searchOpen = false; query = "" }
-                                            "Favorites" -> { page = Page.FAVORITES; selectedAlbum = null; searchOpen = false; query = "" }
-                                            "Videos" -> { page = Page.PHOTOS; selectedAlbum = null; showVideos = true; searchOpen = false; query = "" }
-                                            "Settings" -> { page = Page.SETTINGS; selectedAlbum = null; searchOpen = false; query = "" }
-                                        }
-                                        geminiPrompt = ""
-                                    },
-                                    label = { Text(action) }
-                                )
-                            }
                         }
                         Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             OutlinedTextField(
@@ -578,49 +567,38 @@ private fun PhotoFinderApp() {
                                             true
                                         }
                                         lower.contains("clear search") -> {
-                                            query = ""; searchOpen = false; page = Page.PHOTOS; selectedAlbum = null
+                                            query = ""; visualSearchIds = null; searchOpen = false; page = Page.PHOTOS; selectedAlbum = null
                                             geminiAnswer = "Done — cleared the gallery search."
                                             true
                                         }
                                         lower.contains("find ") || lower.startsWith("search ") || lower.startsWith("show me ") || lower.startsWith("look for ") || lower.startsWith("locate ") -> {
                                             val term = extractGallerySearchTerm(request)
                                             if (term.isNotBlank()) {
-                                                page = Page.PHOTOS; selectedAlbum = null; showVideos = false
-                                                query = term; searchOpen = true
-                                                val cachedMatches = media.count { item ->
-                                                    item.id.toString() !in bin && (
-                                                        item.name.contains(term, true) || item.album.contains(term, true) ||
-                                                        item.recognizedText.contains(term, true) ||
-                                                        parseMap(aiLabels)[item.id.toString()].orEmpty().contains(term, true)
-                                                    )
-                                                }
+                                                page = Page.PHOTOS
+                                                selectedAlbum = null
+                                                showVideos = false
+                                                query = ""
+                                                searchOpen = false
+                                                visualSearchIds = emptySet()
                                                 scope.launch {
                                                     aiWorking = true
-                                                    status = "Looking through your photos for “$term”…"
+                                                    status = "Scanning image contents for “$term”…"
                                                     val candidates = media.filter { !it.isVideo && it.id.toString() !in bin }
                                                     val labeler = ImageLabeling.getClient(ImageLabelerOptions.DEFAULT_OPTIONS)
                                                     val updated = parseMap(aiLabels).toMutableMap()
+                                                    val matchedIds = mutableSetOf<String>()
                                                     var scanned = 0
-                                                    var matched = 0
                                                     try {
                                                         for (item in candidates) {
                                                             try {
                                                                 val labels = withContext(Dispatchers.IO) {
                                                                     labeler.process(InputImage.fromFilePath(context, item.uri)).await()
-                                                                }.filter { it.confidence >= 0.45f }
+                                                                }.filter { it.confidence >= 0.35f }
                                                                     .sortedByDescending { it.confidence }
-                                                                    .take(8)
+                                                                    .take(10)
                                                                     .map { it.text }
-                                                                if (labels.isNotEmpty()) {
-                                                                    updated[item.id.toString()] = labels.joinToString(", ")
-                                                                    if (labels.any { it.contains(term, true) } ||
-                                                                        (term.contains("beach", true) && labels.any { it.contains("sea", true) || it.contains("coast", true) || it.contains("shore", true) || it.contains("sand", true) }) ||
-                                                                        (term.contains("sea", true) && labels.any { it.contains("ocean", true) || it.contains("beach", true) || it.contains("coast", true) }) ||
-                                                                        (term.contains("dog", true) && labels.any { it.contains("puppy", true) }) ||
-                                                                        (term.contains("car", true) && labels.any { it.contains("vehicle", true) }) ||
-                                                                        (term.contains("sunset", true) && labels.any { it.contains("sun", true) || it.contains("sky", true) })
-                                                                    ) matched++
-                                                                }
+                                                                if (labels.isNotEmpty()) updated[item.id.toString()] = labels.joinToString(", ")
+                                                                if (visualLabelsMatch(term, labels)) matchedIds.add(item.id.toString())
                                                             } catch (_: Exception) { }
                                                             scanned++
                                                             aiProgress = scanned
@@ -629,14 +607,15 @@ private fun PhotoFinderApp() {
                                                         aiLabels = mapToString(updated)
                                                         persistNames("ai_labels", aiLabels)
                                                         media = media.map { item -> item.copy(aiLabel = updated[item.id.toString()].orEmpty()) }
-                                                        status = "Visual search finished: scanned $scanned photos. $matched had labels related to “$term”."
-                                                        val response = if (matched > 0 || cachedMatches > 0)
-                                                            "I scanned $scanned photos for visual content related to “$term”. Matching photos are shown in the gallery."
+                                                        visualSearchIds = matchedIds.toSet()
+                                                        status = "Visual search finished: scanned $scanned photos; found ${matchedIds.size} possible matches for “$term”."
+                                                        val response = if (matchedIds.isNotEmpty())
+                                                            "I scanned $scanned photos for visual content related to “$term” and found ${matchedIds.size} possible match(es). They’re now shown in Photos."
                                                         else
-                                                            "I scanned $scanned photos, but the on-device image labeler found no clear matches for “$term”. It can miss some images, so try a related term."
+                                                            "I scanned $scanned photos, but the on-device image model found no confident matches for “$term”. Try a broader description such as “water”, “outdoor”, or “landscape”."
                                                         aiChat = aiChat + (false to response)
-                                                    } catch (e: Exception) {
-                                                        val response = "I couldn't finish scanning the gallery. Check photo permissions and try again."
+                                                    } catch (_: Exception) {
+                                                        val response = "I couldn't finish scanning the gallery. Check Photo Finder's photo permissions and try again."
                                                         status = response
                                                         aiChat = aiChat + (false to response)
                                                     } finally {
@@ -644,7 +623,7 @@ private fun PhotoFinderApp() {
                                                         aiWorking = false
                                                     }
                                                 }
-                                                geminiAnswer = "I’m visually scanning your photos for “$term”. This may take a little while the first time."
+                                                geminiAnswer = "Scanning the actual image contents for “$term”. The first scan may take a little while."
                                                 true
                                             } else false
                                         }
@@ -776,10 +755,8 @@ private fun PhotoFinderApp() {
                             else -> MediaGrid(
                                 activeItems, favorites, customNames,
                                 onOpen = { item ->
-                                    if (item.isVideo) {
-                                        try { context.startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(item.uri, "video/*").addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)) }
-                                        catch (_: Exception) { status = "No video player found." }
-                                    } else viewerIndex = activeItems.indexOf(item)
+                                    if (item.isVideo) videoViewer = item
+                                    else viewerIndex = activeItems.indexOf(item)
                                 },
                                 onFavorite = { item ->
                                     favorites = if (item.id.toString() in favorites) favorites - item.id.toString() else favorites + item.id.toString()
@@ -798,7 +775,7 @@ private fun PhotoFinderApp() {
                     }
                 }
 
-                if (viewerIndex == null) Box(
+                if (viewerIndex == null && page != Page.AI) Box(
                     Modifier.fillMaxWidth().windowInsetsPadding(WindowInsets.navigationBars)
                         .padding(start = 22.dp, end = 22.dp, top = 8.dp, bottom = 8.dp)
                 ) {
@@ -925,6 +902,10 @@ private fun PhotoFinderApp() {
         }
     }
 
+    videoViewer?.let { item ->
+        VideoViewerDialog(item = item, onClose = { videoViewer = null })
+    }
+
     AnimatedVisibility(
         visible = confirmDeleteTarget != null,
         enter = fadeIn() + scaleIn(initialScale = 0.92f, animationSpec = spring(dampingRatio = 0.78f, stiffness = 420f)),
@@ -1000,6 +981,65 @@ private fun PhotoFinderApp() {
             }) { Text("Save name") } },
             dismissButton = { TextButton(onClick = { renameTarget = null }) { Text("Cancel") } }
         )
+    }
+}
+
+private fun visualLabelsMatch(query: String, labels: List<String>): Boolean {
+    val q = query.lowercase(Locale.ROOT).replace(Regex("[^a-z0-9 ]"), " ").trim()
+    val words = labels.map { it.lowercase(Locale.ROOT) }
+    val aliases = when {
+        q.contains("beach") || q.contains("seaside") || q.contains("coast") || q.contains("shore") ->
+            listOf("beach", "coast", "coastline", "shore", "shoreline", "seaside", "sea", "ocean", "sand", "water", "wave")
+        q.contains("sea") || q.contains("ocean") ->
+            listOf("sea", "ocean", "water", "beach", "coast", "wave", "shore")
+        q.contains("dog") || q.contains("puppy") -> listOf("dog", "puppy", "canine", "pet")
+        q.contains("cat") || q.contains("kitten") -> listOf("cat", "kitten", "feline", "pet")
+        q.contains("car") || q.contains("vehicle") -> listOf("car", "vehicle", "automobile", "truck", "transport")
+        q.contains("sunset") || q.contains("sunrise") -> listOf("sunset", "sunrise", "sun", "sky", "dusk", "dawn")
+        q.contains("food") || q.contains("meal") -> listOf("food", "meal", "dish", "cuisine", "fruit", "vegetable")
+        q.contains("mountain") -> listOf("mountain", "hill", "cliff", "landscape")
+        q.contains("forest") || q.contains("woods") -> listOf("forest", "wood", "tree", "nature", "plant")
+        q.contains("person") || q.contains("people") -> listOf("person", "people", "human", "crowd")
+        else -> listOf(q)
+    }
+    return aliases.any { alias -> words.any { label -> label == alias || label.contains(alias) || alias.contains(label) && label.length >= 4 } }
+}
+
+@Composable
+private fun VideoViewerDialog(item: MediaItem, onClose: () -> Unit) {
+    val context = LocalContext.current
+    androidx.compose.ui.window.Dialog(onDismissRequest = onClose) {
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(24.dp),
+            color = Color(0xFF101210),
+            border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.16f)),
+            shadowElevation = 24.dp
+        ) {
+            Column {
+                Row(
+                    Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp, top = 8.dp, bottom = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(item.name, Modifier.weight(1f), color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold)
+                    IconButton(onClick = onClose) { Icon(Icons.Rounded.Close, contentDescription = "Close video", tint = Color.White) }
+                }
+                AndroidView(
+                    modifier = Modifier.fillMaxWidth().height(260.dp),
+                    factory = { ctx ->
+                        val player = VideoView(ctx)
+                        val controls = MediaController(ctx)
+                        controls.setAnchorView(player)
+                        player.setMediaController(controls)
+                        player.setVideoURI(item.uri)
+                        player.setOnPreparedListener { it.isLooping = false; player.start() }
+                        player
+                    },
+                    update = { player -> if (player.tag != item.uri.toString()) { player.tag = item.uri.toString(); player.setVideoURI(item.uri) } }
+                )
+                Text("Playing inside Photo Finder", Modifier.padding(horizontal = 16.dp, vertical = 12.dp), color = Color.LightGray, style = MaterialTheme.typography.bodySmall)
+            }
+        }
     }
 }
 
