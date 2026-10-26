@@ -12,6 +12,7 @@ import android.os.Bundle
 import android.provider.MediaStore
 import android.provider.OpenableColumns
 import androidx.activity.ComponentActivity
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.IntentSenderRequest
 import androidx.activity.compose.setContent
@@ -94,6 +95,8 @@ private enum class Page { PHOTOS, ALBUMS, FAVORITES, BIN, SETTINGS, AI }
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        enableEdgeToEdge()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) window.isNavigationBarContrastEnforced = false
         setContent { PhotoFinderApp() }
     }
 }
@@ -114,6 +117,7 @@ private fun PhotoFinderApp() {
     var indexing by remember { mutableStateOf(false) }
     var status by remember { mutableStateOf("") }
     var page by remember { mutableStateOf(Page.PHOTOS) }
+    var pageBeforeAI by remember { mutableStateOf(Page.PHOTOS) }
     var overflowMenuExpanded by remember { mutableStateOf(false) }
     var showVideos by remember { mutableStateOf(false) }
     var viewerIndex by remember { mutableStateOf<Int?>(null) }
@@ -287,6 +291,11 @@ private fun PhotoFinderApp() {
                     Modifier.fillMaxWidth().padding(start = 20.dp, end = 16.dp, top = 14.dp, bottom = 12.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
+                    if (page == Page.AI) {
+                        IconButton(onClick = { page = pageBeforeAI; selectedAlbum = null }) {
+                            Icon(Icons.Rounded.ArrowBack, contentDescription = "Exit Ask AI")
+                        }
+                    }
                     Column(Modifier.weight(1f)) {
                         Text(
                             when (page) {
@@ -338,6 +347,7 @@ private fun PhotoFinderApp() {
                                 leadingIcon = { Icon(Icons.Rounded.AutoAwesome, contentDescription = null) },
                                 onClick = {
                                     overflowMenuExpanded = false
+                                    pageBeforeAI = page
                                     page = Page.AI
                                     selectedAlbum = null
                                     searchOpen = false
@@ -801,9 +811,9 @@ private fun PhotoFinderApp() {
                             )
                         },
                         shape = RoundedCornerShape(36.dp),
-                        color = (if (darkMode) Color(0xFF343634) else Color(0xFFFDFDFD)).copy(alpha = if (darkMode) 0.22f else 0.30f),
-                        border = androidx.compose.foundation.BorderStroke(1.dp, (if (darkMode) Color.White else Color.Black).copy(alpha = 0.22f)),
-                        shadowElevation = 20.dp
+                        color = (if (darkMode) Color(0xFFBFC9C2) else Color(0xFFFFFFFF)).copy(alpha = if (darkMode) 0.20f else 0.38f),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, (if (darkMode) Color.White else Color.Black).copy(alpha = 0.28f)),
+                        shadowElevation = 28.dp
                     ) {
                         NavigationBar(
                             containerColor = Color.Transparent,
@@ -1031,24 +1041,27 @@ private fun visualLabelsMatch(query: String, labels: List<String>): Boolean {
 @Composable
 private fun VideoViewerDialog(item: MediaItem, onClose: () -> Unit) {
     val context = LocalContext.current
-    androidx.compose.ui.window.Dialog(onDismissRequest = onClose) {
+    androidx.compose.ui.window.Dialog(
+        onDismissRequest = onClose,
+        properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)
+    ) {
         Surface(
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(24.dp),
+            modifier = Modifier.fillMaxSize(),
+            shape = RoundedCornerShape(0.dp),
             color = Color(0xFF101210),
             border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.16f)),
             shadowElevation = 24.dp
         ) {
-            Column {
+            Column(Modifier.fillMaxSize()) {
                 Row(
-                    Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp, top = 8.dp, bottom = 4.dp),
+                    Modifier.fillMaxWidth().windowInsetsPadding(WindowInsets.statusBars).padding(start = 16.dp, end = 8.dp, top = 8.dp, bottom = 4.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(item.name, Modifier.weight(1f), color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold)
                     IconButton(onClick = onClose) { Icon(Icons.Rounded.Close, contentDescription = "Close video", tint = Color.White) }
                 }
                 AndroidView(
-                    modifier = Modifier.fillMaxWidth().height(260.dp),
+                    modifier = Modifier.fillMaxWidth().weight(1f),
                     factory = { ctx ->
                         val player = VideoView(ctx)
                         val controls = MediaController(ctx)
@@ -1061,7 +1074,7 @@ private fun VideoViewerDialog(item: MediaItem, onClose: () -> Unit) {
                     },
                     update = { player -> if (player.tag != item.uri.toString()) { player.tag = item.uri.toString(); player.setVideoURI(item.uri) } }
                 )
-                Text("Playing inside Photo Finder", Modifier.padding(horizontal = 16.dp, vertical = 12.dp), color = Color.LightGray, style = MaterialTheme.typography.bodySmall)
+                Text("Playing inside Photo Finder", Modifier.fillMaxWidth().windowInsetsPadding(WindowInsets.navigationBars).padding(horizontal = 16.dp, vertical = 12.dp), color = Color.LightGray, style = MaterialTheme.typography.bodySmall)
             }
         }
     }
