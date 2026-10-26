@@ -106,6 +106,7 @@ private fun PhotoFinderApp() {
     var geminiKey by remember { mutableStateOf(prefs.getString("gemini_api_key", "") ?: "") }
     var geminiPrompt by remember { mutableStateOf("") }
     var geminiAnswer by remember { mutableStateOf("") }
+    var aiChat by remember { mutableStateOf(listOf<Pair<Boolean, String>>()) }
     var geminiBusy by remember { mutableStateOf(false) }
     var geminiPhotoAnswer by remember { mutableStateOf("") }
     var showGeminiPhotoAnswer by remember { mutableStateOf(false) }
@@ -332,7 +333,7 @@ private fun PhotoFinderApp() {
                                 Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
                                 verticalArrangement = Arrangement.spacedBy(12.dp)
                             ) {
-                                if (geminiAnswer.isBlank()) {
+                                if (aiChat.isEmpty()) {
                                     Spacer(Modifier.height(20.dp))
                                     Icon(Icons.Rounded.AutoAwesome, null, tint = accent, modifier = Modifier.size(34.dp))
                                     Text("What do you want to do?", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
@@ -343,11 +344,23 @@ private fun PhotoFinderApp() {
                                         }
                                     }
                                 } else {
-                                    Surface(
-                                        shape = RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp, bottomEnd = 18.dp, bottomStart = 5.dp),
-                                        color = accent.copy(alpha = 0.12f)
-                                    ) {
-                                        Text(geminiAnswer, Modifier.fillMaxWidth().padding(14.dp), color = MaterialTheme.colorScheme.onSurface)
+                                    aiChat.forEach { (fromUser, message) ->
+                                        Row(
+                                            Modifier.fillMaxWidth(),
+                                            horizontalArrangement = if (fromUser) Arrangement.End else Arrangement.Start
+                                        ) {
+                                            Surface(
+                                                modifier = Modifier.fillMaxWidth(if (fromUser) 0.88f else 1f),
+                                                shape = if (fromUser)
+                                                    RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp, bottomStart = 20.dp, bottomEnd = 5.dp)
+                                                else
+                                                    RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp, bottomEnd = 20.dp, bottomStart = 5.dp),
+                                                color = if (fromUser) accent.copy(alpha = 0.18f) else muted.copy(alpha = 0.09f),
+                                                border = if (fromUser) null else androidx.compose.foundation.BorderStroke(1.dp, muted.copy(alpha = 0.12f))
+                                            ) {
+                                                Text(message, Modifier.fillMaxWidth().padding(14.dp), color = MaterialTheme.colorScheme.onSurface)
+                                            }
+                                        }
                                     }
                                 }
                                 if (geminiBusy) {
@@ -392,6 +405,8 @@ private fun PhotoFinderApp() {
                                     val request = geminiPrompt.trim()
                                     geminiPrompt = ""
                                     val lower = request.lowercase(Locale.ROOT)
+                                    geminiAnswer = ""
+                                    aiChat = aiChat + (true to request)
                                     val navigationHandled = when {
                                         lower in listOf("photos", "open photos", "show photos", "go to photos") -> {
                                             page = Page.PHOTOS; selectedAlbum = null; showVideos = false; searchOpen = false; query = ""; true
@@ -464,9 +479,10 @@ private fun PhotoFinderApp() {
                                         else -> false
                                     }
                                     if (navigationHandled) {
-                                        if (geminiAnswer.isBlank() || !lower.contains("find ") && !lower.startsWith("search ") && !lower.startsWith("show me ")) {
+                                        if (geminiAnswer.isBlank()) {
                                             geminiAnswer = "Done — I changed Photo Finder to match your request."
                                         }
+                                        aiChat = aiChat + (false to geminiAnswer)
                                     } else {
                                         scope.launch {
                                             geminiBusy = true
@@ -480,8 +496,10 @@ private fun PhotoFinderApp() {
                                                     context, geminiKey,
                                                     "You are Ask AI, the assistant built into Photo Finder. Be clear, useful, concise and honest about capabilities. You can operate app navigation and library search only when the app explicitly executes a command; do not claim to have performed actions unless the app confirms them. Do not claim to see photos unless image data is included. Do not identify real people. Library filename and on-device label context (incomplete):\n$libraryContext\n\nUser request: $request"
                                                 )
+                                                aiChat = aiChat + (false to geminiAnswer)
                                             } catch (e: Exception) {
                                                 geminiAnswer = e.message ?: "AI request failed. Check the API key and internet connection in Settings."
+                                                aiChat = aiChat + (false to geminiAnswer)
                                             } finally {
                                                 geminiBusy = false
                                             }
