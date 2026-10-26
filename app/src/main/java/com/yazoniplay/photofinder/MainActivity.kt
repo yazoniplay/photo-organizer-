@@ -249,7 +249,7 @@ private fun PhotoFinderApp() {
         }
     }
 
-    val activeItems = remember(media, page, showVideos, selectedAlbum, query, favorites, bin, customNames, aiLabels) {
+    val activeItems = remember(media, page, showVideos, selectedAlbum, query, favorites, bin, customNames, aiLabels, visualSearchIds) {
         val nameMap = parseMap(customNames)
         val labels = parseMap(aiLabels)
         var list = when (page) {
@@ -1032,6 +1032,7 @@ private fun VideoViewerDialog(item: MediaItem, onClose: () -> Unit) {
                         controls.setAnchorView(player)
                         player.setMediaController(controls)
                         player.setVideoURI(item.uri)
+                        player.tag = item.uri.toString()
                         player.setOnPreparedListener { it.isLooping = false; player.start() }
                         player
                     },
