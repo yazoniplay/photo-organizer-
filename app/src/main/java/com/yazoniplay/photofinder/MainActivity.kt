@@ -582,12 +582,69 @@ private fun PhotoFinderApp() {
                                             geminiAnswer = "Done — cleared the gallery search."
                                             true
                                         }
-                                        lower.contains("find ") || lower.startsWith("search ") || lower.startsWith("show me ") -> {
+                                        lower.contains("find ") || lower.startsWith("search ") || lower.startsWith("show me ") || lower.startsWith("look for ") || lower.startsWith("locate ") -> {
                                             val term = extractGallerySearchTerm(request)
                                             if (term.isNotBlank()) {
                                                 page = Page.PHOTOS; selectedAlbum = null; showVideos = false
                                                 query = term; searchOpen = true
-                                                geminiAnswer = "Searching your library for “$term”. Matching photos are now shown behind this screen. Search uses filenames, album names, OCR text and on-device labels."
+                                                val cachedMatches = media.count { item ->
+                                                    item.id.toString() !in bin && (
+                                                        item.name.contains(term, true) || item.album.contains(term, true) ||
+                                                        item.recognizedText.contains(term, true) ||
+                                                        parseMap(aiLabels)[item.id.toString()].orEmpty().contains(term, true)
+                                                    )
+                                                }
+                                                scope.launch {
+                                                    aiWorking = true
+                                                    status = "Looking through your photos for “$term”…"
+                                                    val candidates = media.filter { !it.isVideo && it.id.toString() !in bin }
+                                                    val labeler = ImageLabeling.getClient(ImageLabelerOptions.DEFAULT_OPTIONS)
+                                                    val updated = parseMap(aiLabels).toMutableMap()
+                                                    var scanned = 0
+                                                    var matched = 0
+                                                    try {
+                                                        for (item in candidates) {
+                                                            try {
+                                                                val labels = withContext(Dispatchers.IO) {
+                                                                    labeler.process(InputImage.fromFilePath(context, item.uri)).await()
+                                                                }.filter { it.confidence >= 0.45f }
+                                                                    .sortedByDescending { it.confidence }
+                                                                    .take(8)
+                                                                    .map { it.text }
+                                                                if (labels.isNotEmpty()) {
+                                                                    updated[item.id.toString()] = labels.joinToString(", ")
+                                                                    if (labels.any { it.contains(term, true) } ||
+                                                                        (term.contains("beach", true) && labels.any { it.contains("sea", true) || it.contains("coast", true) || it.contains("shore", true) || it.contains("sand", true) }) ||
+                                                                        (term.contains("sea", true) && labels.any { it.contains("ocean", true) || it.contains("beach", true) || it.contains("coast", true) }) ||
+                                                                        (term.contains("dog", true) && labels.any { it.contains("puppy", true) }) ||
+                                                                        (term.contains("car", true) && labels.any { it.contains("vehicle", true) }) ||
+                                                                        (term.contains("sunset", true) && labels.any { it.contains("sun", true) || it.contains("sky", true) })
+                                                                    ) matched++
+                                                                }
+                                                            } catch (_: Exception) { }
+                                                            scanned++
+                                                            aiProgress = scanned
+                                                            aiTotal = candidates.size
+                                                        }
+                                                        aiLabels = mapToString(updated)
+                                                        persistNames("ai_labels", aiLabels)
+                                                        media = media.map { item -> item.copy(aiLabel = updated[item.id.toString()].orEmpty()) }
+                                                        status = "Visual search finished: scanned $scanned photos. $matched had labels related to “$term”."
+                                                        val response = if (matched > 0 || cachedMatches > 0)
+                                                            "I scanned $scanned photos for visual content related to “$term”. Matching photos are shown in the gallery."
+                                                        else
+                                                            "I scanned $scanned photos, but the on-device image labeler found no clear matches for “$term”. It can miss some images, so try a related term."
+                                                        aiChat = aiChat + (false to response)
+                                                    } catch (e: Exception) {
+                                                        val response = "I couldn't finish scanning the gallery. Check photo permissions and try again."
+                                                        status = response
+                                                        aiChat = aiChat + (false to response)
+                                                    } finally {
+                                                        labeler.close()
+                                                        aiWorking = false
+                                                    }
+                                                }
+                                                geminiAnswer = "I’m visually scanning your photos for “$term”. This may take a little while the first time."
                                                 true
                                             } else false
                                         }
