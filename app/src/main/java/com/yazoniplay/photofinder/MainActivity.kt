@@ -588,9 +588,37 @@ private fun PhotoFinderApp() {
                     }
                 },
                 aiWorking = aiWorking,
-                darkMode = darkMode
+                darkMode = darkMode,
+                onAskGemini = {
+                    scope.launch {
+                        geminiBusy = true
+                        geminiPhotoAnswer = ""
+                        try {
+                            geminiPhotoAnswer = askGemini(
+                                context, geminiKey,
+                                "Analyze this photo for a personal photo organizer. Describe visible content, likely objects and scene, useful searchable keywords, and suggest a short descriptive filename. Do not identify real people. Clearly say when something is uncertain.",
+                                viewerItems[index].uri
+                            )
+                        } catch (e: Exception) {
+                            geminiPhotoAnswer = e.message ?: "Gemini could not analyze this photo."
+                        } finally {
+                            geminiBusy = false
+                            showGeminiPhotoAnswer = true
+                        }
+                    }
+                },
+                geminiBusy = geminiBusy
             )
         }
+    }
+
+    if (showGeminiPhotoAnswer) {
+        AlertDialog(
+            onDismissRequest = { showGeminiPhotoAnswer = false },
+            title = { Text("Gemini photo analysis") },
+            text = { Text(geminiPhotoAnswer) },
+            confirmButton = { TextButton(onClick = { showGeminiPhotoAnswer = false }) { Text("Done") } }
+        )
     }
 
     renameTarget?.let { item ->
@@ -683,7 +711,9 @@ private fun PhotoViewer(
     item: MediaItem, index: Int, total: Int, title: String, label: String,
     onClose: () -> Unit, onPrevious: () -> Unit, onNext: () -> Unit,
     onFavorite: () -> Unit, isFavorite: Boolean, onSuggestName: () -> Unit,
-    aiWorking: Boolean, darkMode: Boolean
+    aiWorking: Boolean, darkMode: Boolean,
+    onAskGemini: () -> Unit,
+    geminiBusy: Boolean
 ) {
     var scale by remember(item.id) { mutableFloatStateOf(1f) }
     var offsetX by remember(item.id) { mutableFloatStateOf(0f) }
@@ -708,7 +738,8 @@ private fun PhotoViewer(
                 Text("${index + 1} of $total", color = if (darkMode) Color.LightGray else Color.DarkGray, style = MaterialTheme.typography.bodySmall)
             }
             IconButton(onClick = onFavorite) { Icon(if (isFavorite) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder, "Favorite", tint = if (isFavorite) Color(0xFFFF8C9B) else if (darkMode) Color.White else Color.Black) }
-            IconButton(onClick = onSuggestName, enabled = !aiWorking) { if (aiWorking) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp) else Icon(Icons.Rounded.AutoAwesome, "Analyze with AI", tint = if (darkMode) Color.White else Color.Black) }
+            IconButton(onClick = onSuggestName, enabled = !aiWorking) { if (aiWorking) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp) else Icon(Icons.Rounded.AutoAwesome, "On-device labels", tint = if (darkMode) Color.White else Color.Black) }
+            IconButton(onClick = onAskGemini, enabled = !geminiBusy) { if (geminiBusy) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp) else Icon(Icons.Rounded.Chat, "Ask Gemini about photo", tint = if (darkMode) Color.White else Color.Black) }
         }
         if (label.isNotBlank()) Text("AI: $label", Modifier.align(Alignment.BottomCenter).fillMaxWidth().background(bg.copy(alpha = 0.72f)).padding(12.dp), color = if (darkMode) Color.White else Color.Black)
         Row(Modifier.align(Alignment.CenterStart).fillMaxHeight(), verticalAlignment = Alignment.CenterVertically) {
