@@ -194,7 +194,7 @@ private fun PhotoFinderApp() {
                                 Page.FAVORITES -> "Favorites"
                                 Page.BIN -> "Bin"
                                 Page.SETTINGS -> "Settings"
-                                Page.AI -> "AI Studio"
+                                Page.AI -> "Ask AI"
                             },
                             style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold
                         )
@@ -233,7 +233,7 @@ private fun PhotoFinderApp() {
                                 }
                             )
                             DropdownMenuItem(
-                                text = { Text("AI Studio") },
+                                text = { Text("Ask AI") },
                                 leadingIcon = { Icon(Icons.Rounded.AutoAwesome, contentDescription = null) },
                                 onClick = {
                                     overflowMenuExpanded = false
@@ -306,120 +306,151 @@ private fun PhotoFinderApp() {
                         Modifier.weight(1f).fillMaxWidth().padding(horizontal = 16.dp),
                         verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
-                        SettingsRow("Analyze photo library", "Recognize objects and scenes across your photos", Icons.Rounded.AutoAwesome) {
-                            Button(
-                                enabled = !aiWorking && hasImagePermission && media.any { !it.isVideo && it.id.toString() !in bin },
-                                onClick = {
-                                    scope.launch {
-                                        aiWorking = true
-                                        aiProgress = 0
-                                        val candidates = media.filter { !it.isVideo && it.id.toString() !in bin }
-                                        aiTotal = candidates.size
-                                        val labeler = ImageLabeling.getClient(ImageLabelerOptions.DEFAULT_OPTIONS)
-                                        val updated = parseMap(aiLabels).toMutableMap()
-                                        var completed = 0
-                                        try {
-                                            for (item in candidates) {
-                                                if (updated[item.id.toString()].isNullOrBlank()) {
-                                                    try {
-                                                        val labels = withContext(Dispatchers.IO) {
-                                                            labeler.process(InputImage.fromFilePath(context, item.uri)).await()
-                                                        }.sortedByDescending { it.confidence }.take(3).map { it.text }
-                                                        if (labels.isNotEmpty()) updated[item.id.toString()] = labels.joinToString(", ")
-                                                    } catch (_: Exception) { }
-                                                }
-                                                completed++
-                                                aiProgress = completed
-                                            }
-                                            aiLabels = mapToString(updated)
-                                            persistNames("ai_labels", aiLabels)
-                                            media = media.map { item -> item.copy(aiLabel = updated[item.id.toString()].orEmpty()) }
-                                            status = "AI scan complete. Your labels are saved on this device."
-                                        } finally {
-                                            labeler.close()
-                                            aiWorking = false
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Surface(
+                                shape = CircleShape,
+                                color = accent.copy(alpha = 0.14f),
+                                modifier = Modifier.size(44.dp)
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Icon(Icons.Rounded.AutoAwesome, null, tint = accent, modifier = Modifier.size(23.dp))
+                                }
+                            }
+                            Column(Modifier.weight(1f).padding(start = 12.dp)) {
+                                Text("Ask AI", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                                Text("Search, understand and manage your library", color = muted, style = MaterialTheme.typography.bodySmall)
+                            }
+                            if (geminiBusy) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                        }
+                        Surface(
+                            modifier = Modifier.weight(1f).fillMaxWidth(),
+                            shape = RoundedCornerShape(24.dp),
+                            color = surface.copy(alpha = if (darkMode) 0.76f else 0.88f),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, muted.copy(alpha = 0.18f))
+                        ) {
+                            Column(
+                                Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
+                                verticalArrangement = Arrangement.spacedBy(12.dp)
+                            ) {
+                                if (geminiAnswer.isBlank()) {
+                                    Spacer(Modifier.height(20.dp))
+                                    Icon(Icons.Rounded.AutoAwesome, null, tint = accent, modifier = Modifier.size(34.dp))
+                                    Text("What do you want to do?", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
+                                    Text("Ask naturally. I can navigate Photo Finder, search your library, switch views, and help interpret your photos. For AI answers, add your Gemini API key in Settings.", color = muted)
+                                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        listOf("Find screenshots", "Show my favorites", "Open albums", "Show videos").forEach { suggestion ->
+                                            SuggestionChip(onClick = { geminiPrompt = suggestion }, label = { Text(suggestion) })
                                         }
                                     }
+                                } else {
+                                    Surface(
+                                        shape = RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp, bottomEnd = 18.dp, bottomStart = 5.dp),
+                                        color = accent.copy(alpha = 0.12f)
+                                    ) {
+                                        Text(geminiAnswer, Modifier.fillMaxWidth().padding(14.dp), color = MaterialTheme.colorScheme.onSurface)
+                                    }
                                 }
-                            ) { Text(if (aiWorking) "Analyzing…" else "Analyze library") }
-                        }
-                        if (aiWorking) {
-                            LinearProgressIndicator(
-                                progress = { if (aiTotal > 0) aiProgress.toFloat() / aiTotal else 0f },
-                                modifier = Modifier.fillMaxWidth()
-                            )
-                            Text("Analyzed $aiProgress of $aiTotal photos", color = muted)
-                        }
-                        val labelMap = parseMap(aiLabels)
-                        val topLabels = labelMap.values.flatMap { it.split(", ") }
-                            .filter { it.isNotBlank() }.groupingBy { it }.eachCount()
-                            .entries.sortedByDescending { it.value }.take(12)
-                        SettingsRow("Recognized content", "Search your photos by objects and scenes", Icons.Rounded.Search) {
-                            Text("${labelMap.size} analyzed", color = accent, style = MaterialTheme.typography.labelLarge)
-                        }
-                        if (topLabels.isEmpty()) {
-                            Text("Run Analyze library to build searchable labels like dog, beach, food, or sunset.", color = muted)
-                        } else {
-                            Text("What your library contains", fontWeight = FontWeight.SemiBold)
-                            androidx.compose.foundation.layout.FlowRow(
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                verticalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                topLabels.forEach { entry ->
-                                    AssistChip(
-                                        onClick = { page = Page.PHOTOS; showVideos = false; query = entry.key; searchOpen = true },
-                                        label = { Text("${entry.key} · ${entry.value}") },
-                                        leadingIcon = { Icon(Icons.Rounded.AutoAwesome, null) }
-                                    )
-                                }
-                            }
-                        }
-                        Divider(color = muted.copy(alpha = 0.25f))
-                        Text("Ask Gemini", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                        Text("Ask for help organizing your library. Your prompt and limited filename/label context are sent to Google Gemini.", color = muted, style = MaterialTheme.typography.bodySmall)
-                        OutlinedTextField(
-                            value = geminiPrompt,
-                            onValueChange = { geminiPrompt = it },
-                            modifier = Modifier.fillMaxWidth(),
-                            label = { Text("What do you want help with?") },
-                            placeholder = { Text("e.g. Help me organize travel photos…") },
-                            minLines = 2,
-                            maxLines = 4
-                        )
-                        Button(
-                            enabled = !geminiBusy && geminiPrompt.isNotBlank() && geminiKey.isNotBlank(),
-                            onClick = {
-                                scope.launch {
-                                    geminiBusy = true
-                                    geminiAnswer = ""
-                                    try {
-                                        val libraryContext = media.filter { it.id.toString() !in bin }.take(100)
-                                            .joinToString("\n") { item ->
-                                                "${parseMap(customNames)[item.id.toString()] ?: item.name}: ${parseMap(aiLabels)[item.id.toString()].orEmpty()}"
-                                            }
-                                        geminiAnswer = askGemini(
-                                            context, geminiKey,
-                                            "You are Photo Finder's helpful photo-library assistant. Be accurate and concise. Do not claim to see images unless image data is included. Library filename and on-device label context (may be incomplete):\n$libraryContext\n\nUser request: $geminiPrompt"
-                                        )
-                                    } catch (e: Exception) {
-                                        geminiAnswer = e.message ?: "Gemini request failed. Check the API key and internet connection."
-                                    } finally {
-                                        geminiBusy = false
+                                if (geminiBusy) {
+                                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                        CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                                        Text("Thinking…", color = muted)
                                     }
                                 }
                             }
-                        ) {
-                            if (geminiBusy) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
-                            else Icon(Icons.Rounded.AutoAwesome, null)
-                            Spacer(Modifier.width(8.dp))
-                            Text(if (geminiBusy) "Thinking…" else "Ask Gemini")
                         }
-                        if (geminiAnswer.isNotBlank()) {
-                            Surface(color = surface, shape = RoundedCornerShape(16.dp)) {
-                                Text(geminiAnswer, Modifier.fillMaxWidth().padding(16.dp), color = MaterialTheme.colorScheme.onSurface)
+                        Text("Try a command", color = muted, style = MaterialTheme.typography.labelMedium)
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            listOf("Photos", "Albums", "Favorites", "Videos", "Settings").forEach { action ->
+                                AssistChip(
+                                    onClick = {
+                                        when (action) {
+                                            "Photos" -> { page = Page.PHOTOS; selectedAlbum = null; showVideos = false; searchOpen = false; query = "" }
+                                            "Albums" -> { page = Page.ALBUMS; selectedAlbum = null; searchOpen = false; query = "" }
+                                            "Favorites" -> { page = Page.FAVORITES; selectedAlbum = null; searchOpen = false; query = "" }
+                                            "Videos" -> { page = Page.PHOTOS; selectedAlbum = null; showVideos = true; searchOpen = false; query = "" }
+                                            "Settings" -> { page = Page.SETTINGS; selectedAlbum = null; searchOpen = false; query = "" }
+                                        }
+                                        geminiPrompt = ""
+                                    },
+                                    label = { Text(action) }
+                                )
                             }
                         }
-                        Text("The library scan above is on-device. Gemini prompts and any photo you explicitly ask it to analyze are sent to Google for processing.", color = muted, style = MaterialTheme.typography.bodySmall)
+                        Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedTextField(
+                                value = geminiPrompt,
+                                onValueChange = { geminiPrompt = it },
+                                modifier = Modifier.weight(1f),
+                                placeholder = { Text("Message Ask AI…") },
+                                minLines = 1,
+                                maxLines = 4,
+                                shape = RoundedCornerShape(24.dp)
+                            )
+                            FilledIconButton(
+                                enabled = !geminiBusy && geminiPrompt.isNotBlank(),
+                                onClick = {
+                                    val request = geminiPrompt.trim()
+                                    geminiPrompt = ""
+                                    val lower = request.lowercase(Locale.ROOT)
+                                    val navigationHandled = when {
+                                        lower in listOf("photos", "open photos", "show photos", "go to photos") -> {
+                                            page = Page.PHOTOS; selectedAlbum = null; showVideos = false; searchOpen = false; query = ""; true
+                                        }
+                                        lower.contains("video") && (lower.contains("show") || lower.contains("open") || lower == "videos") -> {
+                                            page = Page.PHOTOS; selectedAlbum = null; showVideos = true; searchOpen = false; query = ""; true
+                                        }
+                                        lower.contains("favorite") && (lower.contains("show") || lower.contains("open") || lower.contains("go to")) -> {
+                                            page = Page.FAVORITES; selectedAlbum = null; searchOpen = false; query = ""; true
+                                        }
+                                        lower.contains("album") && (lower.contains("show") || lower.contains("open") || lower.contains("go to")) -> {
+                                            page = Page.ALBUMS; selectedAlbum = null; searchOpen = false; query = ""; true
+                                        }
+                                        lower.contains("setting") && (lower.contains("open") || lower.contains("go to")) -> {
+                                            page = Page.SETTINGS; selectedAlbum = null; searchOpen = false; query = ""; true
+                                        }
+                                        lower.contains("find ") || lower.startsWith("search ") || lower.startsWith("show me ") -> {
+                                            val term = request.substringAfter("find ", request.substringAfter("search ", request.substringAfter("show me ", ""))).trim()
+                                                .removePrefix("photos of ").removePrefix("photos with ").removePrefix("for ")
+                                            if (term.isNotBlank()) {
+                                                page = Page.PHOTOS; selectedAlbum = null; showVideos = false
+                                                query = term; searchOpen = true
+                                                geminiAnswer = "Searching your library for “$term”. Matching photos are now shown behind this screen. Search uses filenames, album names, OCR text and on-device labels."
+                                                true
+                                            } else false
+                                        }
+                                        else -> false
+                                    }
+                                    if (navigationHandled) {
+                                        if (geminiAnswer.isBlank() || !lower.contains("find ") && !lower.startsWith("search ") && !lower.startsWith("show me ")) {
+                                            geminiAnswer = "Done — I changed Photo Finder to match your request."
+                                        }
+                                    } else {
+                                        scope.launch {
+                                            geminiBusy = true
+                                            geminiAnswer = ""
+                                            try {
+                                                val libraryContext = media.filter { it.id.toString() !in bin }.take(100)
+                                                    .joinToString("\n") { item ->
+                                                        "${parseMap(customNames)[item.id.toString()] ?: item.name}: ${parseMap(aiLabels)[item.id.toString()].orEmpty()}"
+                                                    }
+                                                geminiAnswer = askGemini(
+                                                    context, geminiKey,
+                                                    "You are Ask AI, the assistant built into Photo Finder. Be clear, useful, concise and honest about capabilities. You can operate app navigation and library search only when the app explicitly executes a command; do not claim to have performed actions unless the app confirms them. Do not claim to see photos unless image data is included. Do not identify real people. Library filename and on-device label context (incomplete):\n$libraryContext\n\nUser request: $request"
+                                                )
+                                            } catch (e: Exception) {
+                                                geminiAnswer = e.message ?: "AI request failed. Check the API key and internet connection in Settings."
+                                            } finally {
+                                                geminiBusy = false
+                                            }
+                                        }
+                                    }
+                                },
+                                shape = CircleShape
+                            ) {
+                                Icon(Icons.Rounded.ArrowUpward, contentDescription = "Send to Ask AI")
+                            }
+                        }
+                        Text("AI answers use Gemini. Your prompt and limited filename/label context are sent to Google. Photos are sent only when you explicitly ask to analyze one.", color = muted, style = MaterialTheme.typography.bodySmall)
                     }
                     Page.SETTINGS -> Column(
                         Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp),
@@ -436,10 +467,10 @@ private fun PhotoFinderApp() {
                                 })
                             }
                         }
-                        SettingsRow("AI features", "On-device labels plus optional Gemini AI", Icons.Rounded.AutoAwesome) {
+                        SettingsRow("AI features", "On-device labels plus Ask AI", Icons.Rounded.AutoAwesome) {
                             Text(if (geminiKey.isBlank()) "Set up" else "Ready", color = accent, style = MaterialTheme.typography.labelLarge)
                         }
-                        Text("Gemini API key", fontWeight = FontWeight.SemiBold)
+                        Text("AI model API key (Gemini)", fontWeight = FontWeight.SemiBold)
                         OutlinedTextField(
                             value = geminiKey,
                             onValueChange = { geminiKey = it },
@@ -538,10 +569,45 @@ private fun PhotoFinderApp() {
                     }
                 }
 
-                NavigationBar(containerColor = bg, tonalElevation = 0.dp, modifier = Modifier.windowInsetsPadding(WindowInsets.navigationBars)) {
-                    NavigationBarItem(selected = page == Page.PHOTOS, onClick = { page = Page.PHOTOS; selectedAlbum = null }, icon = { Icon(Icons.Rounded.PhotoLibrary, null) }, label = { Text("Photos") })
-                    NavigationBarItem(selected = page == Page.ALBUMS, onClick = { page = Page.ALBUMS; selectedAlbum = null }, icon = { Icon(Icons.Rounded.Collections, null) }, label = { Text("Albums") })
-                    NavigationBarItem(selected = page == Page.FAVORITES, onClick = { page = Page.FAVORITES }, icon = { Icon(Icons.Rounded.Favorite, null) }, label = { Text("Favorites") })
+                Box(
+                    Modifier.fillMaxWidth().windowInsetsPadding(WindowInsets.navigationBars)
+                        .padding(start = 22.dp, end = 22.dp, top = 8.dp, bottom = 8.dp)
+                ) {
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(30.dp),
+                        color = (if (darkMode) Color(0xFF272B27) else Color.White).copy(alpha = if (darkMode) 0.78f else 0.82f),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, (if (darkMode) Color.White else Color.Black).copy(alpha = 0.12f)),
+                        shadowElevation = 12.dp
+                    ) {
+                        NavigationBar(
+                            containerColor = Color.Transparent,
+                            tonalElevation = 0.dp,
+                            modifier = Modifier.height(72.dp)
+                        ) {
+                            NavigationBarItem(
+                                selected = page == Page.PHOTOS,
+                                onClick = { page = Page.PHOTOS; selectedAlbum = null },
+                                icon = { Icon(Icons.Rounded.PhotoLibrary, null) },
+                                label = { Text("Photos") },
+                                colors = NavigationBarItemDefaults.colors(indicatorColor = accent.copy(alpha = 0.18f))
+                            )
+                            NavigationBarItem(
+                                selected = page == Page.ALBUMS,
+                                onClick = { page = Page.ALBUMS; selectedAlbum = null },
+                                icon = { Icon(Icons.Rounded.Collections, null) },
+                                label = { Text("Albums") },
+                                colors = NavigationBarItemDefaults.colors(indicatorColor = accent.copy(alpha = 0.18f))
+                            )
+                            NavigationBarItem(
+                                selected = page == Page.FAVORITES,
+                                onClick = { page = Page.FAVORITES },
+                                icon = { Icon(Icons.Rounded.Favorite, null) },
+                                label = { Text("Favorites") },
+                                colors = NavigationBarItemDefaults.colors(indicatorColor = accent.copy(alpha = 0.18f))
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -591,7 +657,7 @@ private fun PhotoFinderApp() {
                 },
                 aiWorking = aiWorking,
                 darkMode = darkMode,
-                onAskGemini = {
+                onAskAI = {
                     scope.launch {
                         geminiBusy = true
                         geminiPhotoAnswer = ""
@@ -617,7 +683,7 @@ private fun PhotoFinderApp() {
     if (showGeminiPhotoAnswer) {
         AlertDialog(
             onDismissRequest = { showGeminiPhotoAnswer = false },
-            title = { Text("Gemini photo analysis") },
+            title = { Text("Ask AI · Photo analysis") },
             text = { Text(geminiPhotoAnswer) },
             confirmButton = { TextButton(onClick = { showGeminiPhotoAnswer = false }) { Text("Done") } }
         )
@@ -741,7 +807,7 @@ private fun PhotoViewer(
             }
             IconButton(onClick = onFavorite) { Icon(if (isFavorite) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder, "Favorite", tint = if (isFavorite) Color(0xFFFF8C9B) else if (darkMode) Color.White else Color.Black) }
             IconButton(onClick = onSuggestName, enabled = !aiWorking) { if (aiWorking) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp) else Icon(Icons.Rounded.AutoAwesome, "On-device labels", tint = if (darkMode) Color.White else Color.Black) }
-            IconButton(onClick = onAskGemini, enabled = !geminiBusy) { if (geminiBusy) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp) else Icon(Icons.Rounded.Chat, "Ask Gemini about photo", tint = if (darkMode) Color.White else Color.Black) }
+            IconButton(onClick = onAskGemini, enabled = !geminiBusy) { if (geminiBusy) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp) else Icon(Icons.Rounded.AutoAwesome, "Ask AI about photo", tint = if (darkMode) Color.White else Color.Black) }
         }
         if (label.isNotBlank()) Text("AI: $label", Modifier.align(Alignment.BottomCenter).fillMaxWidth().background(bg.copy(alpha = 0.72f)).padding(12.dp), color = if (darkMode) Color.White else Color.Black)
         Row(Modifier.align(Alignment.CenterStart).fillMaxHeight(), verticalAlignment = Alignment.CenterVertically) {
