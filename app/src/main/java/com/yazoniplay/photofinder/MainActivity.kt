@@ -149,10 +149,12 @@ private fun PhotoFinderApp() {
         favorites = favorites - key
         customNames = parseMap(customNames).toMutableMap().also { it.remove(key) }.let { mapToString(it) }
         aiLabels = parseMap(aiLabels).toMutableMap().also { it.remove(key) }.let { mapToString(it) }
-        persistSet("bin", bin)
-        persistSet("favorites", favorites)
-        persistNames("custom_names", customNames)
-        persistNames("ai_labels", aiLabels)
+        prefs.edit()
+            .putStringSet("bin", bin.toSet())
+            .putStringSet("favorites", favorites.toSet())
+            .putString("custom_names", customNames)
+            .putString("ai_labels", aiLabels)
+            .apply()
         context.getSharedPreferences("photo_finder_ocr", Context.MODE_PRIVATE).edit().remove(key).apply()
         confirmDeleteTarget = null
         deleteBusy = false
