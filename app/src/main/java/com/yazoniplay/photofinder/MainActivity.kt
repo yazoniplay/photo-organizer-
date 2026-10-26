@@ -27,6 +27,7 @@ import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
@@ -401,36 +402,18 @@ private fun PhotoFinderApp() {
                         verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Surface(
-                                shape = CircleShape,
-                                color = accent.copy(alpha = 0.14f),
-                                modifier = Modifier.size(44.dp)
-                            ) {
-                                Box(contentAlignment = Alignment.Center) {
-                                    Icon(Icons.Rounded.AutoAwesome, null, tint = accent, modifier = Modifier.size(23.dp))
-                                }
-                            }
-                            Column(Modifier.weight(1f).padding(start = 12.dp)) {
-                                Text("Ask AI", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                                Text("Search, understand and manage your library", color = muted, style = MaterialTheme.typography.bodySmall)
-                            }
+                            Text("Ask AI", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
                             if (geminiBusy) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
                         }
-                        Surface(
-                            modifier = Modifier.weight(1f).fillMaxWidth(),
-                            shape = RoundedCornerShape(24.dp),
-                            color = surface.copy(alpha = if (darkMode) 0.76f else 0.88f),
-                            border = androidx.compose.foundation.BorderStroke(1.dp, muted.copy(alpha = 0.18f))
+                        Column(
+                            Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 4.dp, vertical = 12.dp),
+                            verticalArrangement = Arrangement.spacedBy(20.dp)
                         ) {
-                            Column(
-                                Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
-                                verticalArrangement = Arrangement.spacedBy(12.dp)
-                            ) {
                                 if (aiChat.isEmpty()) {
                                     Spacer(Modifier.height(20.dp))
                                     Icon(Icons.Rounded.AutoAwesome, null, tint = accent, modifier = Modifier.size(34.dp))
                                     Text("What do you want to do?", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
-                                    Text("Ask naturally. I can navigate Photo Finder, search your library, switch views, and help interpret your photos. For AI answers, add your Gemini API key in Settings.", color = muted)
+                                    Text("Ask naturally. I can navigate Photo Finder, search your library, switch views, and help interpret your photos. For AI answers, configure your AI provider in Settings.", color = muted)
                                     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                         listOf("Find screenshots", "Show my favorites", "Open albums", "Show videos").forEach { suggestion ->
                                             SuggestionChip(onClick = { geminiPrompt = suggestion }, label = { Text(suggestion) })
@@ -464,7 +447,9 @@ private fun PhotoFinderApp() {
                                 }
                             }
                         }
-                        Text("Try a command", color = muted, style = MaterialTheme.typography.labelMedium)
+                        if (aiChat.isEmpty()) {
+                            Text("Try asking", color = muted, style = MaterialTheme.typography.labelMedium)
+                        }
                         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             listOf("Photos", "Albums", "Favorites", "Videos", "Settings").forEach { action ->
                                 AssistChip(
@@ -487,7 +472,7 @@ private fun PhotoFinderApp() {
                                 value = geminiPrompt,
                                 onValueChange = { geminiPrompt = it },
                                 modifier = Modifier.weight(1f),
-                                placeholder = { Text("Message Ask AI…") },
+                                placeholder = { Text("Message") },
                                 minLines = 1,
                                 maxLines = 4,
                                 shape = RoundedCornerShape(24.dp)
@@ -599,8 +584,7 @@ private fun PhotoFinderApp() {
                                             true
                                         }
                                         lower.contains("find ") || lower.startsWith("search ") || lower.startsWith("show me ") -> {
-                                            val term = request.substringAfter("find ", request.substringAfter("search ", request.substringAfter("show me ", ""))).trim()
-                                                .removePrefix("photos of ").removePrefix("photos with ").removePrefix("for ")
+                                            val term = extractGallerySearchTerm(request)
                                             if (term.isNotBlank()) {
                                                 page = Page.PHOTOS; selectedAlbum = null; showVideos = false
                                                 query = term; searchOpen = true
@@ -643,7 +627,7 @@ private fun PhotoFinderApp() {
                                 Icon(Icons.Rounded.ArrowUpward, contentDescription = "Send to Ask AI")
                             }
                         }
-                        Text("AI answers use Gemini. Your prompt and limited filename/label context are sent to Google. Photos are sent only when you explicitly ask to analyze one.", color = muted, style = MaterialTheme.typography.bodySmall)
+                        Text("Your prompt and limited filename/label context are sent to the configured AI service. Photos are sent only when you explicitly ask to analyze one.", color = muted, style = MaterialTheme.typography.bodySmall)
                     }
                     Page.SETTINGS -> Column(
                         Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp),
@@ -663,29 +647,29 @@ private fun PhotoFinderApp() {
                         SettingsRow("AI features", "On-device labels plus Ask AI", Icons.Rounded.AutoAwesome) {
                             Text(if (geminiKey.isBlank()) "Set up" else "Ready", color = accent, style = MaterialTheme.typography.labelLarge)
                         }
-                        Text("AI model API key (Gemini)", fontWeight = FontWeight.SemiBold)
+                        Text("AI service API key", fontWeight = FontWeight.SemiBold)
                         OutlinedTextField(
                             value = geminiKey,
                             onValueChange = { geminiKey = it },
                             modifier = Modifier.fillMaxWidth(),
                             label = { Text("Paste your API key") },
-                            placeholder = { Text("Gemini API key") },
+                            placeholder = { Text("Paste your AI service key") },
                             singleLine = true
                         )
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             Button(onClick = {
                                 prefs.edit().putString("gemini_api_key", geminiKey.trim()).apply()
                                 geminiKey = geminiKey.trim()
-                                status = "Gemini key saved on this device."
+                                status = "AI service key saved on this device."
                             }) { Text("Save key") }
                             TextButton(onClick = {
                                 geminiKey = ""
                                 prefs.edit().remove("gemini_api_key").apply()
-                                status = "Gemini key removed."
+                                status = "AI service key removed."
                             }) { Text("Remove key") }
                         }
-                        Text("Gemini requires internet and may have usage limits or charges. Never share your key. This prototype stores it locally; a public production app should use a secure backend instead of embedding API credentials.", color = muted, style = MaterialTheme.typography.bodySmall)
-                        SettingsRow("Privacy", "Photos are only sent to Gemini when you explicitly ask it to analyze one.", Icons.Rounded.Lock) {
+                        Text("The AI service needs internet and may have usage limits or charges. Never share your key. This prototype stores it locally; a public production app should use a secure backend instead of embedding API credentials.", color = muted, style = MaterialTheme.typography.bodySmall)
+                        SettingsRow("Privacy", "Photos are only sent to the AI service when you explicitly ask it to analyze one.", Icons.Rounded.Lock) {
                             Icon(Icons.Rounded.CheckCircle, null, tint = accent)
                         }
                         SettingsRow("Library", "${media.size} items · ${media.map { it.album }.distinct().size} folders", Icons.Rounded.Collections) {
@@ -765,7 +749,7 @@ private fun PhotoFinderApp() {
                     Surface(
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(30.dp),
-                        color = (if (darkMode) Color(0xFF272B27) else Color.White).copy(alpha = if (darkMode) 0.78f else 0.82f),
+                        color = (if (darkMode) Color(0xFF272B27) else Color.White).copy(alpha = if (darkMode) 0.30f else 0.38f),
                         border = androidx.compose.foundation.BorderStroke(1.dp, (if (darkMode) Color.White else Color.Black).copy(alpha = 0.12f)),
                         shadowElevation = 12.dp
                     ) {
@@ -1049,7 +1033,7 @@ private fun PhotoViewer(
             }
             IconButton(onClick = onFavorite) { Icon(if (isFavorite) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder, "Favorite", tint = if (isFavorite) Color(0xFFFF8C9B) else if (darkMode) Color.White else Color.Black) }
             IconButton(onClick = onSuggestName, enabled = !aiWorking) { if (aiWorking) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp) else Icon(Icons.Rounded.AutoAwesome, "On-device labels", tint = if (darkMode) Color.White else Color.Black) }
-            IconButton(onClick = onAskAI, enabled = !geminiBusy) { if (geminiBusy) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp) else Icon(Icons.Rounded.AutoAwesome, "Ask AI about photo", tint = if (darkMode) Color.White else Color.Black) }
+            IconButton(onClick = onAskAI, enabled = !geminiBusy) { if (geminiBusy) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp) else Icon(Icons.Rounded.AutoAwesome, "Analyze photo", tint = if (darkMode) Color.White else Color.Black) }
         }
         if (label.isNotBlank()) Text("AI: $label", Modifier.align(Alignment.BottomCenter).fillMaxWidth().background(bg.copy(alpha = 0.72f)).padding(12.dp), color = if (darkMode) Color.White else Color.Black)
         Row(Modifier.align(Alignment.CenterStart).fillMaxHeight(), verticalAlignment = Alignment.CenterVertically) {
@@ -1092,6 +1076,19 @@ private fun loadMedia(context: Context, includeVideos: Boolean): List<MediaItem>
     readCollection(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, false)
     if (includeVideos) readCollection(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, true)
     return output.sortedByDescending { it.dateAdded }
+}
+
+
+private fun extractGallerySearchTerm(request: String): String {
+    var term = request.trim().lowercase(Locale.ROOT)
+    term = term.replace(Regex("^(please\\s+)?(can you\\s+|could you\\s+)?"), "")
+    term = term.replace(Regex("^(find|search for|search|show me|look for|locate)\\s+"), "")
+    term = term.replace(Regex("^(a|an|the)\\s+"), "")
+    term = term.replace(Regex("^(photo|picture|image|pic|photos|pictures|images)\\s+"), "")
+    term = term.replace(Regex("^(of|with|in|on|at|from|showing|containing)\\s+"), "")
+    term = term.replace(Regex("^(a|an|the)\\s+"), "")
+    term = term.replace(Regex("\\s+(please|for me)$"), "").trim()
+    return term
 }
 
 private fun inferYear(item: MediaItem): Int? {
