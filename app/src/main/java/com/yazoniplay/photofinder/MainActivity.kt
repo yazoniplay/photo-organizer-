@@ -12,30 +12,41 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.ImageSearch
+import androidx.compose.material.icons.rounded.Collections
+import androidx.compose.material.icons.rounded.Image
 import androidx.compose.material.icons.rounded.Lock
+import androidx.compose.material.icons.rounded.PhotoLibrary
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.TextSnippet
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -65,11 +76,15 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
-private val Ink = Color(0xFF171A18)
-private val Panel = Color(0xFF222723)
-private val Mint = Color(0xFFB9F3D0)
-private val Muted = Color(0xFFADB8B0)
+private val Background = Color(0xFF101210)
+private val SurfaceDark = Color(0xFF1B1E1B)
+private val Accent = Color(0xFFC5E8B7)
+private val TextMain = Color(0xFFF2F3EF)
+private val TextMuted = Color(0xFFA4AAA1)
 
 private data class PhotoItem(
     val id: Long,
@@ -82,6 +97,9 @@ private data class PhotoItem(
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Keep app content below Android's status bar and above gesture navigation.
+        window.statusBarColor = android.graphics.Color.rgb(16, 18, 16)
+        window.navigationBarColor = android.graphics.Color.rgb(16, 18, 16)
         setContent { PhotoFinderApp() }
     }
 }
@@ -103,263 +121,215 @@ private fun PhotoFinderApp() {
     }
     var loading by remember { mutableStateOf(false) }
     var indexing by remember { mutableStateOf(false) }
-    var status by remember { mutableStateOf("Your photos stay on this device.") }
+    var status by remember { mutableStateOf("") }
+    var selectedTab by remember { mutableStateOf(0) }
+    var searchOpen by remember { mutableStateOf(false) }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted ->
         hasPermission = granted
-        if (!granted) status = "Photo access is needed to show your gallery."
+        if (!granted) status = "Allow photo access to show your gallery."
     }
 
     LaunchedEffect(hasPermission) {
         if (hasPermission) {
             loading = true
             photos = withContext(Dispatchers.IO) {
-                val savedIndex = context.getSharedPreferences("photo_finder_ocr", android.content.Context.MODE_PRIVATE)
+                val saved = context.getSharedPreferences("photo_finder_ocr", android.content.Context.MODE_PRIVATE)
                 loadPhotos(context).map { photo ->
-                    photo.copy(recognizedText = savedIndex.getString(photo.id.toString(), "") ?: "")
+                    photo.copy(recognizedText = saved.getString(photo.id.toString(), "") ?: "")
                 }
             }
             loading = false
-            status = if (photos.isEmpty()) "No photos found in the accessible gallery."
-            else "${photos.size} photos ready. Search filenames or previously indexed screenshot text."
         }
     }
 
-    val visiblePhotos = remember(photos, query) {
+    val visiblePhotos = remember(photos, query, selectedTab) {
         val term = query.trim()
-        if (term.isEmpty()) photos
-        else photos.filter {
+        val filtered = if (term.isEmpty()) photos else photos.filter {
             it.name.contains(term, ignoreCase = true) ||
                 it.recognizedText.contains(term, ignoreCase = true)
         }
+        if (selectedTab == 1) filtered.distinctBy { it.dateAdded / 86400L } else filtered
     }
 
     MaterialTheme(colorScheme = darkColorScheme(
-        background = Ink,
-        surface = Panel,
-        primary = Mint,
-        onPrimary = Ink,
-        onBackground = Color(0xFFF3F6F3),
-        onSurface = Color(0xFFF3F6F3)
+        background = Background,
+        surface = SurfaceDark,
+        primary = Accent,
+        onPrimary = Background,
+        onBackground = TextMain,
+        onSurface = TextMain
     )) {
-        Surface(modifier = Modifier.fillMaxSize(), color = Ink) {
+        Surface(Modifier.fillMaxSize(), color = Background) {
             Column(
-                modifier = Modifier.fillMaxSize().padding(horizontal = 20.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp)
+                modifier = Modifier.fillMaxSize()
+                    .windowInsetsPadding(WindowInsets.statusBars)
+                    .windowInsetsPadding(WindowInsets.navigationBars)
             ) {
-                Spacer(Modifier.height(18.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(start = 20.dp, end = 16.dp, top = 14.dp, bottom = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            if (selectedTab == 1) "Albums" else if (searchOpen) "Search" else "Photos",
+                            style = MaterialTheme.typography.headlineLarge,
+                            fontWeight = FontWeight.Bold,
+                            color = TextMain
+                        )
+                        Text(
+                            if (hasPermission) "${photos.size} items on this device" else "Your personal gallery",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = TextMuted
+                        )
+                    }
                     Box(
-                        modifier = Modifier.size(48.dp).clip(RoundedCornerShape(16.dp))
-                            .background(Mint),
+                        modifier = Modifier.size(44.dp).clip(CircleShape).background(SurfaceDark)
+                            .clickable { searchOpen = !searchOpen; if (!searchOpen) query = "" },
                         contentAlignment = Alignment.Center
                     ) {
-                        androidx.compose.material3.Icon(
-                            Icons.Rounded.ImageSearch,
-                            contentDescription = null,
-                            tint = Ink,
-                            modifier = Modifier.size(27.dp)
-                        )
+                        Icon(Icons.Rounded.Search, contentDescription = "Search photos", tint = TextMain)
                     }
-                    Column(modifier = Modifier.padding(start = 12.dp).weight(1f)) {
-                        Text("PHOTO FINDER", style = MaterialTheme.typography.labelMedium, color = Mint)
-                        Text(
-                            "Find the one.",
-                            style = MaterialTheme.typography.headlineMedium,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
-                    androidx.compose.material3.Icon(
-                        Icons.Rounded.Lock,
-                        contentDescription = "On-device privacy",
-                        tint = Mint
+                }
+
+                if (searchOpen) {
+                    OutlinedTextField(
+                        value = query,
+                        onValueChange = { query = it },
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+                        singleLine = true,
+                        placeholder = { Text("Search photos or screenshot text") },
+                        leadingIcon = { Icon(Icons.Rounded.Search, contentDescription = null) },
+                        shape = RoundedCornerShape(18.dp)
                     )
                 }
 
-                Text(
-                    "Search your gallery by filename or by words inside screenshots.",
-                    color = Muted,
-                    style = MaterialTheme.typography.bodyMedium
-                )
-
-                OutlinedTextField(
-                    value = query,
-                    onValueChange = { query = it },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true,
-                    placeholder = { Text("Try “server IP” or “receipt”…") },
-                    leadingIcon = {
-                        androidx.compose.material3.Icon(Icons.Rounded.Search, contentDescription = null)
-                    },
-                    shape = RoundedCornerShape(18.dp)
-                )
-
-                if (!hasPermission) {
-                    Column(
-                        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(22.dp))
-                            .background(Panel).padding(20.dp),
-                        verticalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        Text("Your gallery, on your terms", fontWeight = FontWeight.SemiBold)
-                        Text("Photo Finder needs photo access to show images and search screenshot text. Images are not uploaded.", color = Muted)
-                        Button(
-                            onClick = {
-                                permissionLauncher.launch(
-                                    if (Build.VERSION.SDK_INT >= 33) Manifest.permission.READ_MEDIA_IMAGES
-                                    else Manifest.permission.READ_EXTERNAL_STORAGE
-                                )
-                            },
-                            colors = ButtonDefaults.buttonColors(containerColor = Mint)
-                        ) { Text("Allow photo access") }
-                    }
-                } else {
+                if (hasPermission) {
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text("YOUR LIBRARY", color = Mint, style = MaterialTheme.typography.labelMedium)
-                            Text("${visiblePhotos.size} results", color = Muted, style = MaterialTheme.typography.bodySmall)
-                        }
-                        Button(
-                            enabled = !indexing && !loading && photos.isNotEmpty(),
-                            onClick = {
-                                scope.launch {
-                                    indexing = true
-                                    status = "Reading text from screenshots on your phone…"
-                                    val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
-                                    val candidates = photos.filter { item ->
-                                        val filename = item.name.lowercase()
-                                        filename.contains("screenshot") ||
-                                            filename.contains("screen_shot") ||
-                                            filename.contains("screen shot")
-                                    }.take(250)
-                                    val indexed = withContext(Dispatchers.IO) {
-                                        candidates.map { item ->
-                                            try {
-                                                val image = InputImage.fromFilePath(context, item.uri)
-                                                val result = recognizer.process(image).await()
-                                                item.copy(recognizedText = result.text)
-                                            } catch (_: Exception) {
-                                                item
+                        Text(
+                            if (query.isBlank()) "Recently added" else "${visiblePhotos.size} results",
+                            modifier = Modifier.weight(1f),
+                            color = TextMain,
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Box(
+                            modifier = Modifier.clip(RoundedCornerShape(50)).background(SurfaceDark)
+                                .clickable(enabled = !indexing && !loading && photos.isNotEmpty()) {
+                                    scope.launch {
+                                        indexing = true
+                                        status = "Reading screenshot text…"
+                                        val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
+                                        val candidates = photos.filter { item ->
+                                            val n = item.name.lowercase()
+                                            n.contains("screenshot") || n.contains("screen_shot") || n.contains("screen shot")
+                                        }.take(250)
+                                        val indexed = withContext(Dispatchers.IO) {
+                                            candidates.map { item ->
+                                                try {
+                                                    val image = InputImage.fromFilePath(context, item.uri)
+                                                    item.copy(recognizedText = recognizer.process(image).await().text)
+                                                } catch (_: Exception) { item }
                                             }
                                         }
+                                        recognizer.close()
+                                        val byId = indexed.associateBy { it.id }
+                                        val saved = context.getSharedPreferences("photo_finder_ocr", android.content.Context.MODE_PRIVATE)
+                                        with(saved.edit()) {
+                                            indexed.forEach { putString(it.id.toString(), it.recognizedText) }
+                                            apply()
+                                        }
+                                        photos = photos.map { byId[it.id] ?: it }
+                                        indexing = false
+                                        status = "Indexed text in ${indexed.count { it.recognizedText.isNotBlank() }} of ${candidates.size} screenshots."
                                     }
-                                    recognizer.close()
-                                    val byId = indexed.associateBy { it.id }
-                                    val savedIndex = context.getSharedPreferences("photo_finder_ocr", android.content.Context.MODE_PRIVATE)
-                                    with(savedIndex.edit()) {
-                                        indexed.forEach { item -> putString(item.id.toString(), item.recognizedText) }
-                                        apply()
-                                    }
-                                    photos = photos.map { byId[it.id] ?: it }
-                                    indexing = false
-                                    status = if (candidates.isEmpty()) {
-                                        "No screenshots were recognized by filename. Try searching by filename instead."
-                                    } else {
-                                        "Saved text from ${indexed.count { it.recognizedText.isNotBlank() }} of ${candidates.size} screenshots on this device. Search above."
-                                    }
-                                }
-                            },
-                            colors = ButtonDefaults.buttonColors(containerColor = Mint),
-                            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp)
+                                }.padding(horizontal = 12.dp, vertical = 9.dp)
                         ) {
-                            if (indexing) {
-                                CircularProgressIndicator(
-                                    modifier = Modifier.size(17.dp),
-                                    strokeWidth = 2.dp,
-                                    color = Ink
-                                )
-                            } else {
-                                androidx.compose.material3.Icon(
-                                    Icons.Rounded.TextSnippet,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(17.dp)
-                                )
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                if (indexing) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                                else Icon(Icons.Rounded.TextSnippet, contentDescription = null, tint = Accent, modifier = Modifier.size(18.dp))
+                                Text(if (indexing) "Scanning" else "Find text", color = Accent, style = MaterialTheme.typography.labelLarge)
                             }
-                            Text(
-                                if (indexing) " Indexing" else " Index screenshots",
-                                modifier = Modifier.padding(start = 6.dp)
+                        }
+                    }
+                    if (status.isNotBlank()) {
+                        Text(status, modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp), color = TextMuted, style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+
+                when {
+                    !hasPermission -> Box(Modifier.fillMaxSize().weight(1f).padding(24.dp), contentAlignment = Alignment.Center) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Icon(Icons.Rounded.PhotoLibrary, contentDescription = null, tint = Accent, modifier = Modifier.size(52.dp))
+                            Text("Your photos, all in one place", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                            Text("Photo Finder searches locally. Your images are never uploaded.", color = TextMuted)
+                            Button(onClick = {
+                                permissionLauncher.launch(if (Build.VERSION.SDK_INT >= 33) Manifest.permission.READ_MEDIA_IMAGES else Manifest.permission.READ_EXTERNAL_STORAGE)
+                            }, colors = ButtonDefaults.buttonColors(containerColor = Accent)) {
+                                Text("Allow access", color = Background)
+                            }
+                        }
+                    }
+                    loading -> Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
+                        CircularProgressIndicator(color = Accent)
+                    }
+                    visiblePhotos.isEmpty() -> Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Icon(Icons.Rounded.Image, contentDescription = null, tint = TextMuted, modifier = Modifier.size(48.dp))
+                            Text(if (query.isBlank()) "No photos found" else "No matching photos", fontWeight = FontWeight.SemiBold)
+                            Text(if (query.isBlank()) "Photos on your device will appear here." else "Try a different search.", color = TextMuted)
+                        }
+                    }
+                    else -> LazyVerticalGrid(
+                        columns = GridCells.Fixed(3),
+                        modifier = Modifier.weight(1f),
+                        contentPadding = PaddingValues(start = 2.dp, end = 2.dp, top = 4.dp, bottom = 8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(2.dp),
+                        verticalArrangement = Arrangement.spacedBy(2.dp)
+                    ) {
+                        items(items = visiblePhotos, key = { it.id }) { item ->
+                            AsyncImage(
+                                model = item.uri,
+                                contentDescription = "Photo from ${friendlyDate(item.dateAdded)}",
+                                modifier = Modifier.fillMaxWidth().height(128.dp).background(SurfaceDark),
+                                contentScale = ContentScale.Crop
                             )
                         }
                     }
-
-                    Text(status, color = Muted, style = MaterialTheme.typography.bodySmall)
-
-                    when {
-                        loading -> Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
-                            CircularProgressIndicator(color = Mint)
-                        }
-                        visiblePhotos.isEmpty() -> Box(
-                            Modifier.fillMaxWidth().weight(1f),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                androidx.compose.material3.Icon(
-                                    Icons.Rounded.ImageSearch,
-                                    contentDescription = null,
-                                    tint = Muted,
-                                    modifier = Modifier.size(42.dp)
-                                )
-                                Spacer(Modifier.height(12.dp))
-                                Text("Nothing found", fontWeight = FontWeight.SemiBold)
-                                Text("Try another search or index screenshot text.", color = Muted)
-                            }
-                        }
-                        else -> LazyVerticalGrid(
-                            columns = GridCells.Adaptive(minSize = 104.dp),
-                            modifier = Modifier.weight(1f),
-                            contentPadding = PaddingValues(bottom = 24.dp),
-                            horizontalArrangement = Arrangement.spacedBy(10.dp),
-                            verticalArrangement = Arrangement.spacedBy(10.dp)
-                        ) {
-                            items(items = visiblePhotos, key = { it.id }) { item ->
-                                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                                    AsyncImage(
-                                        model = item.uri,
-                                        contentDescription = item.name,
-                                        modifier = Modifier.fillMaxWidth().height(124.dp)
-                                            .clip(RoundedCornerShape(14.dp))
-                                            .background(Panel),
-                                        contentScale = ContentScale.Crop
-                                    )
-                                    Text(
-                                        item.name,
-                                        color = Color(0xFFE5EBE6),
-                                        style = MaterialTheme.typography.labelSmall,
-                                        maxLines = 2,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                }
-                            }
-                        }
-                    }
                 }
 
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
-                    horizontalArrangement = Arrangement.Center,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    androidx.compose.material3.Icon(
-                        Icons.Rounded.Lock,
-                        contentDescription = null,
-                        tint = Muted,
-                        modifier = Modifier.size(13.dp)
+                NavigationBar(containerColor = Background, tonalElevation = 0.dp) {
+                    NavigationBarItem(
+                        selected = selectedTab == 0,
+                        onClick = { selectedTab = 0 },
+                        icon = { Icon(Icons.Rounded.PhotoLibrary, contentDescription = "Photos") },
+                        label = { Text("Photos") }
                     )
-                    Text(
-                        "  Private by design · No cloud uploads",
-                        color = Muted,
-                        style = MaterialTheme.typography.labelSmall
+                    NavigationBarItem(
+                        selected = selectedTab == 1,
+                        onClick = { selectedTab = 1 },
+                        icon = { Icon(Icons.Rounded.Collections, contentDescription = "Albums") },
+                        label = { Text("Albums") }
+                    )
+                    NavigationBarItem(
+                        selected = searchOpen,
+                        onClick = { searchOpen = true; selectedTab = 0 },
+                        icon = { Icon(Icons.Rounded.Search, contentDescription = "Search") },
+                        label = { Text("Search") }
                     )
                 }
             }
         }
     }
 }
+
+private fun friendlyDate(seconds: Long): String =
+    SimpleDateFormat("MMM d, yyyy", Locale.getDefault()).format(Date(seconds * 1000L))
 
 private fun loadPhotos(context: android.content.Context): List<PhotoItem> {
     val collection = MediaStore.Images.Media.EXTERNAL_CONTENT_URI
@@ -381,13 +351,11 @@ private fun loadPhotos(context: android.content.Context): List<PhotoItem> {
         val dateColumn = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.DATE_ADDED)
         while (cursor.moveToNext()) {
             val id = cursor.getLong(idColumn)
-            val name = cursor.getString(nameColumn) ?: "Image"
-            val dateAdded = cursor.getLong(dateColumn)
             results += PhotoItem(
                 id = id,
                 uri = ContentUris.withAppendedId(collection, id),
-                name = name,
-                dateAdded = dateAdded
+                name = cursor.getString(nameColumn) ?: "Image",
+                dateAdded = cursor.getLong(dateColumn)
             )
         }
     }
