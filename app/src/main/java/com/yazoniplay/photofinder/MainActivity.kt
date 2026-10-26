@@ -446,7 +446,6 @@ private fun PhotoFinderApp() {
                                     }
                                 }
                             }
-                        }
                         if (aiChat.isEmpty()) {
                             Text("Try asking", color = muted, style = MaterialTheme.typography.labelMedium)
                         }
@@ -742,12 +741,26 @@ private fun PhotoFinderApp() {
                     }
                 }
 
-                Box(
+                if (viewerIndex == null) Box(
                     Modifier.fillMaxWidth().windowInsetsPadding(WindowInsets.navigationBars)
                         .padding(start = 22.dp, end = 22.dp, top = 8.dp, bottom = 8.dp)
                 ) {
                     Surface(
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier.fillMaxWidth().pointerInput(Unit) {
+                            detectDragGesturesAfterLongPress(
+                                onDragStart = { position ->
+                                    val slot = (position.x / size.width.coerceAtLeast(1).toFloat() * 3).toInt().coerceIn(0, 2)
+                                    page = when (slot) { 0 -> Page.PHOTOS; 1 -> Page.ALBUMS; else -> Page.FAVORITES }
+                                    selectedAlbum = null
+                                },
+                                onDrag = { change, _ ->
+                                    val slot = (change.position.x / size.width.coerceAtLeast(1).toFloat() * 3).toInt().coerceIn(0, 2)
+                                    page = when (slot) { 0 -> Page.PHOTOS; 1 -> Page.ALBUMS; else -> Page.FAVORITES }
+                                    selectedAlbum = null
+                                    change.consume()
+                                }
+                            )
+                        },
                         shape = RoundedCornerShape(30.dp),
                         color = (if (darkMode) Color(0xFF272B27) else Color.White).copy(alpha = if (darkMode) 0.30f else 0.38f),
                         border = androidx.compose.foundation.BorderStroke(1.dp, (if (darkMode) Color.White else Color.Black).copy(alpha = 0.12f)),
@@ -830,6 +843,8 @@ private fun PhotoFinderApp() {
                 },
                 aiWorking = aiWorking,
                 darkMode = darkMode,
+                currentPage = page,
+                onNavigate = { destination -> page = destination; selectedAlbum = null; searchOpen = false; query = "" },
                 onAskAI = {
                     scope.launch {
                         geminiBusy = true
@@ -1006,6 +1021,7 @@ private fun PhotoViewer(
     onClose: () -> Unit, onPrevious: () -> Unit, onNext: () -> Unit,
     onFavorite: () -> Unit, isFavorite: Boolean, onSuggestName: () -> Unit,
     aiWorking: Boolean, darkMode: Boolean,
+    currentPage: Page, onNavigate: (Page) -> Unit,
     onAskAI: () -> Unit,
     geminiBusy: Boolean
 ) {
@@ -1041,6 +1057,33 @@ private fun PhotoViewer(
         }
         Row(Modifier.align(Alignment.CenterEnd).fillMaxHeight(), verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = onNext, enabled = index < total - 1) { Icon(Icons.Rounded.ChevronRight, "Next photo", tint = if (darkMode) Color.White else Color.Black) }
+        }
+        Surface(
+            modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().windowInsetsPadding(WindowInsets.navigationBars)
+                .padding(start = 22.dp, end = 22.dp, bottom = 8.dp)
+                .pointerInput(Unit) {
+                    detectDragGesturesAfterLongPress(
+                        onDragStart = { position ->
+                            val slot = (position.x / size.width.coerceAtLeast(1).toFloat() * 3).toInt().coerceIn(0, 2)
+                            onNavigate(when (slot) { 0 -> Page.PHOTOS; 1 -> Page.ALBUMS; else -> Page.FAVORITES })
+                        },
+                        onDrag = { change, _ ->
+                            val slot = (change.position.x / size.width.coerceAtLeast(1).toFloat() * 3).toInt().coerceIn(0, 2)
+                            onNavigate(when (slot) { 0 -> Page.PHOTOS; 1 -> Page.ALBUMS; else -> Page.FAVORITES })
+                            change.consume()
+                        }
+                    )
+                },
+            shape = RoundedCornerShape(28.dp),
+            color = Color.Black.copy(alpha = 0.24f),
+            border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.18f)),
+            shadowElevation = 8.dp
+        ) {
+            NavigationBar(containerColor = Color.Transparent, tonalElevation = 0.dp, modifier = Modifier.height(68.dp)) {
+                NavigationBarItem(selected = currentPage == Page.PHOTOS, onClick = { onNavigate(Page.PHOTOS) }, icon = { Icon(Icons.Rounded.PhotoLibrary, null) }, label = { Text("Photos") }, colors = NavigationBarItemDefaults.colors(indicatorColor = Color.White.copy(alpha = 0.15f)))
+                NavigationBarItem(selected = currentPage == Page.ALBUMS, onClick = { onNavigate(Page.ALBUMS) }, icon = { Icon(Icons.Rounded.Collections, null) }, label = { Text("Albums") }, colors = NavigationBarItemDefaults.colors(indicatorColor = Color.White.copy(alpha = 0.15f)))
+                NavigationBarItem(selected = currentPage == Page.FAVORITES, onClick = { onNavigate(Page.FAVORITES) }, icon = { Icon(Icons.Rounded.Favorite, null) }, label = { Text("Favorites") }, colors = NavigationBarItemDefaults.colors(indicatorColor = Color.White.copy(alpha = 0.15f)))
+            }
         }
     }
 }
