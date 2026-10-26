@@ -18,6 +18,9 @@ android {
 
     buildTypes {
         release {
+            // Use Android's debug signing key for personal testing installs.
+            // For Play Store distribution, replace this with a private release keystore.
+            signingConfig = signingConfigs.getByName("debug")
             isMinifyEnabled = false
         }
     }
